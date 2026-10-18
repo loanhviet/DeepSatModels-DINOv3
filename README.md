@@ -2,6 +2,114 @@
 
 This fork integrates a **pretrained, frozen DINOv3 backbone** into [DeepSatModels](https://github.com/michaeltrs/DeepSatModels) (`53e6559`) for PASTIS24 segmentation. The changes focus on image feature extraction while retaining TSViT's temporal modeling and segmentation objective.
 
+## Implementation Highlights — Key Code Changes
+
+Integration replaces only `TSViT.to_patch_embedding`. The inherited [`TSViT.forward()`](models/TSViT/TSViTdense.py#L419-L448) still runs temporal (and, when present, spatial) blocks and the head. Training is three separate steps: **(1)** forward produces logits; **(2)** the criterion returns a scalar loss and `loss.backward()` fills `.grad` on trainable network weights (not on DINOv3 inside `no_grad`); **(3)** `optimizer.step()` applies AdamW to those weights. The masked cross-entropy module has **no learnable parameters**—only the network weights are updated.
+
+### 1. Where DINOv3 is wired into TSViT
+
+[`TSViTDINOv3`](models/TSViT/TSViTDINOv3.py) subclasses TSViT and swaps the patch embedder. The parent forward still calls `self.to_patch_embedding(x)` on spectral input (10 bands, no DOY channel):
+
+```python
+# models/TSViT/TSViTDINOv3.py
+class TSViTDINOv3(TSViT):
+    def __init__(self, model_config):
+        super().__init__(model_config)
+        self.to_patch_embedding = DINOv3PatchEmbedding(model_config)
+```
+
+```python
+# models/TSViT/TSViTdense.py (unchanged call site in TSViT.forward)
+x = self.to_patch_embedding(x)  # was Linear patch embed; now DINOv3 → projection
+x = x.reshape(B, -1, T, self.dim)
+x += temporal_pos_embedding.unsqueeze(1)
+# … temporal_transformer → space_transformer (if present) → mlp_head
+```
+
+The temporal variant uses a dedicated forward in [`TSViTDINOv3Temporal`](models/TSViT/TSViTDINOv3.py#L123-L147) but still feeds the same `(B·N, T, dim)` tensor shape from `DINOv3PatchEmbedding`.
+
+### 2. Loading and freezing the pretrained backbone
+
+Checkpoint path comes from YAML (`MODEL.dinov3_checkpoint`). Weights load locally; gradients are disabled and inference stays in eval mode even when the rest of the model trains:
+
+```python
+# models/TSViT/TSViTDINOv3.py — DINOv3PatchEmbedding.__init__
+self.backbone = AutoModel.from_pretrained(str(checkpoint), local_files_only=True)
+self.backbone.requires_grad_(False)
+self.backbone.eval()
+
+def train(self, mode=True):
+    super().train(mode)
+    self.backbone.eval()
+    return self
+```
+
+Forward features are computed under `torch.no_grad()` so autograd does not build a graph through DINOv3:
+
+```python
+with torch.no_grad():
+    features = frames.new_zeros((b * t, num_patches, self.backbone.config.hidden_size))
+    # … backbone(pixel_values=rgb).last_hidden_state → patch tokens only
+```
+
+Smoke test asserts `adapter.backbone.parameters()` have `requires_grad=False` and `grad is None` after `backward()` ([`tests/smoke_dinov3.py`](tests/smoke_dinov3.py#L89-L92)).
+
+### 3. DINOv3 patch tokens → TSViT embedding space
+
+RGB is built in `prepare_rgb`; register/CLS tokens are stripped; patch tokens are projected **outside** `no_grad`, so gradients reach the trainable linear map (and downstream TSViT blocks):
+
+```python
+# models/TSViT/TSViTDINOv3.py
+self.projection = nn.Linear(self.backbone.config.hidden_size, model_config['dim'])
+# forward (after no_grad feature fill):
+patch_tokens = tokens[:, 1 + self.backbone.config.num_register_tokens:]
+embeddings = self.projection(features)
+return rearrange(embeddings.reshape(b, t, num_patches, -1), 'b t n d -> (b n) t d')
+```
+
+Output layout matches the original patch embed: `(batch × num_patches, time, dim)` for the temporal Transformer.
+
+### 4. Loss computation, backward, and optimizer step
+
+**Loss (scalar, no weight update):** logits `[B,19,24,24]` are permuted to `[B,H,W,C]`. [`MaskedCrossEntropyLoss`](metrics/loss_functions.py#L149-L191) masks void label 19, applies log-softmax on the class axis, gathers the target class, and means over valid pixels:
+
+```python
+# metrics/loss_functions.py — forward excerpt
+masked_log_probs_flat = torch.nn.functional.log_softmax(masked_logits_flat, dim=-1)
+masked_losses_flat = -torch.gather(masked_log_probs_flat, dim=1, index=masked_target_flat)
+return masked_losses_flat.mean()
+```
+
+**Backward (gradients on network parameters, not on frozen DINOv3):** the training entrypoint and smoke test use the same pattern:
+
+```python
+# train_and_eval/segmentation_training_transf.py — train_step
+optimizer.zero_grad()
+outputs = net(sample['inputs'].to(device)).permute(0, 2, 3, 1)
+loss = loss_fn['mean'](outputs, ground_truth)  # scalar from criterion
+loss.backward()    # populates .grad on trainable params; backbone stays None
+optimizer.step()   # AdamW updates trainable weights only
+```
+
+[`tests/smoke_dinov3.py`](tests/smoke_dinov3.py#L164-L194) checks finite loss, valid-pixel cross-entropy equivalence, zero gradient on void pixels, nonzero grads on trainable groups, **unchanged trainable weights after `backward()` only**, then `optimizer.step()` changes them while the backbone digest stays identical.
+
+### Trainable vs frozen (smoke test, one AdamW step)
+
+Measured on 2026-10-18 with DINOv3 Small, real sample `10000_0.pickle`, B=1, T=60. “Gradient” = finite nonzero `.grad` after `loss.backward()`. “Weight updated” = parameter tensor changed after `optimizer.step()` (weights unchanged between backward and step).
+
+| Module | Frozen (no θ update) | Gradient on backward | Weight updated after step |
+| --- | --- | --- | --- |
+| RGB adapter (buffers only) | Yes | No (inside `no_grad` for DINO) | No |
+| DINOv3 `backbone` | Yes | No (`grad is None`) | No (211/211 tensors match checkpoint digest) |
+| `to_patch_embedding.projection` | No | Yes | Yes |
+| DOY embedding (`to_temporal_embedding_input`) and `temporal_token` | No | Yes | Yes |
+| Temporal Transformer | No | Yes | Yes |
+| Spatial Transformer + `space_pos_embedding` | No when present | Yes when present | Yes when present |
+| Segmentation head (`mlp_head`) | No | Yes | Yes |
+| `MaskedCrossEntropyLoss` | N/A (no learnable θ) | N/A | **No** — only computes ℒ; does not receive optimizer updates |
+
+Coverage: `TSViT_DINOv3` — 102/102 trainable tensors in AdamW, all 102 changed after step; `TSViT_DINOv3_Temporal` — 55/55. Details: [Verification](#verification) and JSON under [`docs/validation/final-task1/`](docs/validation/final-task1/).
+
 ## What changed
 
 Implementation: [`models/TSViT/TSViTDINOv3.py`](models/TSViT/TSViTDINOv3.py).
@@ -46,7 +154,9 @@ MODEL:
 
 ## Loss and parameter updates
 
-The **original masked cross-entropy objective is retained** because the segmentation classes, labels and output format are unchanged. Source: [`MaskedCrossEntropyLoss`](metrics/loss_functions.py) and the [`training loop`](train_and_eval/segmentation_training_transf.py).
+**DINOv3 wiring and the path from inputs to logits** are documented in [Implementation Highlights — Key Code Changes](#implementation-highlights--key-code-changes) (§1–§3). This section records the **segmentation objective and optimizer behavior**, which match upstream DeepSatModels: only **network** weights are updated; the criterion is not trained.
+
+The **original masked cross-entropy objective is retained** because the segmentation classes, labels and output format are unchanged. Source: [`MaskedCrossEntropyLoss`](metrics/loss_functions.py) and [`train_step`](train_and_eval/segmentation_training_transf.py#L34-L43) in the training entrypoint.
 
 For logits `z`, labels `y`, and valid pixels `V = {i : y_i != 19}`:
 
@@ -58,27 +168,21 @@ The training loop permutes logits to `[B,H,W,C]`; labels and boolean masks are `
 
 **All-void fix:** mean reduction now raises `ValueError` before backward/step instead of returning `NaN`. Valid-pixel values/gradients are unchanged; unreduced evaluation output remains empty when no pixels are valid. Returning zero alone would still allow AdamW momentum/weight-decay updates, so this fix explicitly rejects the batch.
 
+**Gradient path:** \(\mathcal{L}\) depends on logits from the full forward pass (`TSViT_DINOv3` or `TSViT_DINOv3_Temporal`). Autograd flows through projection, temporal/spatial blocks, and the head. It does **not** reach DINOv3 weights because backbone features are computed inside `torch.no_grad()`; trainable layers still receive gradients from \(\partial \mathcal{L}/\partial \theta\) on their own parameters.
+
+Training uses the same three-step loop as upstream; `net` is the DINOv3-integrated model from YAML:
+
 ```python
+# train_and_eval/segmentation_training_transf.py — train_step (abbreviated)
 optimizer.zero_grad()
-logits = net(inputs)
-loss = criterion(logits.permute(0, 2, 3, 1), (labels, valid_mask))  # calculate loss
-loss.backward()    # compute gradients; weights are unchanged
-optimizer.step()   # AdamW updates weights using those gradients
+outputs = net(sample['inputs'].to(device))          # DINOv3 embed → TSViT → [B,19,24,24]
+outputs = outputs.permute(0, 2, 3, 1)
+loss = loss_fn['mean'](outputs, ground_truth)       # scalar ℒ; loss module has no θ
+loss.backward()                                     # .grad on trainable net params only
+optimizer.step()                                    # AdamW updates those θ, not ℒ or DINOv3
 ```
 
-The following results apply to the measured valid-pixel smoke step:
-
-| Module | Trainable | Gradient | Weight Updated |
-| --- | --- | --- | --- |
-| RGB adapter | No learned parameters | Inside `no_grad()` | N/A |
-| DINOv3 backbone | No | None | No |
-| Projection | Yes | Finite, nonzero | Yes |
-| DOY embedding and temporal class tokens | Yes | Finite, nonzero | Yes |
-| Temporal Transformer | Yes | Finite, nonzero | Yes |
-| Spatial Transformer and spatial positions | Yes, when retained | Finite, nonzero | Yes, when retained |
-| Segmentation head | Yes | Finite, nonzero | Yes |
-
-Fixed DINOv3 features still allow gradients with respect to the projection's weights and all subsequent trainable layers. On the tested single GPU, AdamW receives exactly the trainable parameters through `get_net_trainable_params`; the configs use `lr=1e-3` and `weight_decay=0`.
+Frozen vs trainable modules, smoke-test gradient norms, and the row for `MaskedCrossEntropyLoss` (no weight updates): [Trainable vs frozen](#trainable-vs-frozen-smoke-test-one-adamw-step) above. On the tested single GPU, AdamW receives exactly the trainable parameters through `get_net_trainable_params` (102 or 55 tensors); configs use `lr=1e-3` and `weight_decay=0`.
 
 ## Verification
 
