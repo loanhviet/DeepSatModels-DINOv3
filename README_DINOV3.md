@@ -1,5 +1,7 @@
 # DINOv3 Integration with TSViT
 
+For a concise list of changed files, see [README.md — What changed](README.md#what-changed).
+
 This guide documents changes from DeepSatModels at commit `53e6559` and
 explains how to reproduce the validation runs. The supported configuration
 is semantic segmentation on PASTIS24, producing a 24×24 output map with
@@ -123,11 +125,11 @@ small/
 └── preprocessor_config.json
 ```
 
-The existing checkpoints are under
-`/home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/models/`, in the
-`small`, `base`, and `satellite` directories. The model loads them locally
-with `AutoModel.from_pretrained(..., local_files_only=True)` and does not
-automatically download weights. These are not `.pth` files for `torch.hub`.
+Download or place checkpoints locally (for example under
+`/path/to/dinov3/models/` with `small`, `base`, and `satellite` subdirectories).
+Set `MODEL.dinov3_checkpoint` in YAML to the chosen variant directory. The
+model loads them with `AutoModel.from_pretrained(..., local_files_only=True)` and
+does not automatically download weights. These are not `.pth` files for `torch.hub`.
 
 Small/Base/Satellite have feature dimensions 384/768/1024. The adapter reads
 the feature dimension and normalization statistics from the selected
@@ -151,13 +153,8 @@ each CSV entry to locate its pickle file. If an entry is
 The repository's smoke CSV contains only `10000_0.pickle`, so its `base_dir`
 must point directly to the directory containing that file.
 
-The sample used for validation is currently at:
-
-```text
-/home/viet/projects/TLU/TSViT/crop-map/data_collection/outputs/reference_comparison/10000_0.pickle
-```
-
-On another machine, place the sample in a local data directory and update YAML:
+For smoke runs, use any valid PASTIS24 pickle (for example `10000_0.pickle`) and
+point `DATASETS.train/eval.base_dir` at the directory that contains it. Update YAML:
 
 | Field | Required value |
 | --- | --- |

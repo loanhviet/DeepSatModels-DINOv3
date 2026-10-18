@@ -1,36 +1,77 @@
-# DeepSatModels — DINOv3 for Satellite Image Time Series
+# DeepSatModels — DINOv3 Backbone for TSViT (PASTIS24)
 
-This repository extends [DeepSatModels](https://github.com/michaeltrs/DeepSatModels)
-from commit `53e655936be088522ec419b3ead38684c20ae1ec`. It integrates DINOv3
-with TSViT for crop-type semantic segmentation on PASTIS24 while reusing the
-original data, training, loss, and evaluation pipeline.
+This repository extends [DeepSatModels](https://github.com/michaeltrs/DeepSatModels) from commit `53e655936be088522ec419b3ead38684c20ae1ec`. It replaces TSViT’s spatial patch embedding with a **frozen DINOv3** ViT backbone for crop-type semantic segmentation on PASTIS24, while reusing the original data loading, training script, masked cross-entropy loss, and evaluation pipeline.
 
-Local runs are used only to check that the implementation works. Full
-training and evaluation on separate dataset splits have not been performed.
+Local runs validate the integration on a small real sample. Full-dataset training and metrics on held-out splits have not been reported yet.
+
+---
+
+## What changed
+
+### Scope
+
+| Term | Implementation |
+| --- | --- |
+| Backbone / spatial encoder | `DINOv3PatchEmbedding` in `models/TSViT/TSViTDINOv3.py` |
+| Replaced module | TSViT `to_patch_embedding` (linear embed on 10 spectral bands) |
+| Preserved | Temporal (and optionally spatial) TSViT Transformers, DOY embedding, segmentation head, PASTIS24 pipeline |
+
+```text
+Original TSViT:
+  images → Patch embedding → Temporal TSViT → Spatial TSViT → Head
+
+TSViT_DINOv3:
+  images → RGB adapter → DINOv3 (frozen) → Projection → Temporal → Spatial → Head
+
+TSViT_DINOv3_Temporal:
+  images → RGB adapter → DINOv3 → Projection → Temporal → Head
+  (TSViT Spatial Transformer removed)
+```
+
+The temporal variant still uses the TSViT temporal encoder; DINOv3 does not replace the full TSViT stack.
+
+### Modified and new files
+
+| Priority | Path | Description |
+| --- | --- | --- |
+| Core | [`models/TSViT/TSViTDINOv3.py`](models/TSViT/TSViTDINOv3.py) | DINOv3 adapter, projection, `TSViT_DINOv3`, `TSViT_DINOv3_Temporal` |
+| Registration | [`models/__init__.py`](models/__init__.py) | Architecture names in YAML; lazy imports for non-TSViT models |
+| Config | [`configs/PASTIS24/TSViT_DINOv3_*.yaml`](configs/PASTIS24/), [`TSViT_DINOv3_Temporal_*.yaml`](configs/PASTIS24/) | Smoke and fold1 experiment configs |
+| Tests | [`tests/smoke_dinov3.py`](tests/smoke_dinov3.py), [`tests/fixtures/pastis24-smoke.csv`](tests/fixtures/pastis24-smoke.csv) | Integration smoke on a real pickle sample |
+| Dependencies | [`requirements-dinov3.txt`](requirements-dinov3.txt) | PyTorch + Transformers stack for DINOv3 |
+| Training | [`train_and_eval/segmentation_training_transf.py`](train_and_eval/segmentation_training_transf.py) | Optional seed, CUDA memory logging, SummaryWriter cleanup |
+| Data / utils | [`data/__init__.py`](data/__init__.py), [`data/datasets.yaml`](data/datasets.yaml), [`utils/config_files_utils.py`](utils/config_files_utils.py) | Configurable dataset paths; YAML safe load |
+| Documentation | [`README_DINOV3.md`](README_DINOV3.md), [`docs/dinov3-smoke.md`](docs/dinov3-smoke.md), [`docs/dinov3-temporal-smoke.md`](docs/dinov3-temporal-smoke.md), [`docs/validation/`](docs/validation/) | Architecture details, smoke reports, provenance |
+
+Unchanged for the core TSViT design: [`models/TSViT/TSViTdense.py`](models/TSViT/TSViTdense.py) and related attention modules, PASTIS transforms and loader, loss and metrics. `TSViT_DINOv3` subclasses TSViT and reuses `TSViT.forward()` with a new patch embedding.
+
+### Commits (this fork)
+
+| Commit | Summary |
+| --- | --- |
+| `af680b7` | DINOv3 patch embedding; both TSViT Transformers retained |
+| `532341c` | Temporal-only variant without TSViT Spatial Transformer |
+| `9bff7e6` | Documentation and smoke validation artifacts |
+
+---
 
 ## Architectures
 
-| `MODEL.architecture` | Processing pipeline | Change from the original TSViT |
-| --- | --- | --- |
-| `TSViT` | Patch embedding → Temporal TSViT → Spatial TSViT → head | Original model |
-| `TSViT_DINOv3` | DINOv3 → Projection → Temporal TSViT → Spatial TSViT → head | Replaces patch embedding with DINOv3 features |
-| `TSViT_DINOv3_Temporal` | DINOv3 → Projection → Temporal TSViT → head | Replaces patch embedding and removes the TSViT spatial Transformer |
+| `MODEL.architecture` | Pipeline |
+| --- | --- |
+| `TSViT` | Patch embedding → Temporal → Spatial → head (original) |
+| `TSViT_DINOv3` | DINOv3 → Projection → Temporal → Spatial → head |
+| `TSViT_DINOv3_Temporal` | DINOv3 → Projection → Temporal → head |
 
-Both DINOv3 variants use RGB input and a frozen backbone. The projection,
-temporal Transformer, and segmentation head remain trainable. The variant
-that retains the spatial Transformer also trains that block. Both use the
-original masked cross-entropy loss.
+Both DINOv3 variants use RGB input through an adapter, keep the backbone frozen in `eval()` mode with `torch.no_grad()`, and train the projection, temporal blocks (and spatial where applicable), and head. Loss remains the original masked cross-entropy.
 
-The temporal variant retains the TSViT temporal encoder; it does not replace
-the entire TSViT encoder with DINOv3.
+For RGB denormalization, resize to DINOv3 input size, padding-frame handling, and token grid alignment (12×12), see [README_DINOV3.md — Architecture](README_DINOV3.md#1-architecture).
+
+---
 
 ## Installation
 
-The following environment is for local smoke checks. Run commands from the
-repository root. The tested environment is Linux,
-Python 3.13.14, PyTorch 2.9.1+cu128, torchvision 0.24.1+cu128, and an NVIDIA
-RTX 3050 Laptop GPU with 4 GB VRAM. Install `uv` and an NVIDIA driver
-compatible with CUDA 12.8 before creating the environment.
+Tested on Linux with Python 3.13, PyTorch 2.9.1+cu128, torchvision 0.24.1+cu128, and an NVIDIA GPU (CUDA 12.8). Run from the repository root:
 
 ```bash
 uv venv --python 3.13 .venv
@@ -39,62 +80,86 @@ uv pip install --python .venv/bin/python torch==2.9.1 torchvision==0.24.1 \
 uv pip install --python .venv/bin/python -r requirements-dinov3.txt
 ```
 
-The legacy conda environment in `deepsatmodels_env.yml` is retained as part
-of the original repository. Use the separate environment above for DINOv3.
+The legacy conda file `deepsatmodels_env.yml` comes from upstream; use the environment above for DINOv3 work.
 
-## Setup and execution
+Pin versions for reproduction: [`docs/validation/environment-freeze.txt`](docs/validation/environment-freeze.txt).
 
-1. Prepare a DINOv3 checkpoint in Hugging Face format and PASTIS24 pickle data.
-2. Select a YAML configuration and set its checkpoint and data paths.
-3. Configure the YAML paths and run the real-sample checks.
+---
 
-[README_DINOV3.md](README_DINOV3.md) describes the data format, configuration
-fields, test and training commands, and code changes. The `*_smoke.yaml`
-files currently reference a sample on the machine used for validation;
-update these paths on another machine. The `*_fold1.yaml` files contain
-`/path/to/PASTIS24` placeholders that must be replaced before use.
+## Configuration and data
 
-For example, after configuring the paths for the temporal variant:
+Prepare:
+
+1. A local Hugging Face DINOv3 checkpoint directory (`config.json`, `model.safetensors`, `preprocessor_config.json`).
+2. PASTIS24 pickle data and path CSVs (see [README_DINOV3.md §3–§4](README_DINOV3.md#3-environment-and-checkpoints)).
+
+Minimal YAML fields:
+
+| Field | Role |
+| --- | --- |
+| `MODEL.architecture` | `TSViT_DINOv3` or `TSViT_DINOv3_Temporal` |
+| `MODEL.dinov3_checkpoint` | Path to checkpoint directory |
+| `MODEL.frame_chunk_size` | Default `1` reduces VRAM (one frame through DINOv3 at a time) |
+| `DATASETS.train/eval.base_dir`, `paths` | Data root and split CSVs |
+| `CHECKPOINT.save_path` | Run output directory |
+
+Update paths in `*_smoke.yaml` on your machine. `*_fold1.yaml` use `/path/to/...` placeholders for full training.
+
+---
+
+## Smoke test and training
+
+After paths are set:
 
 ```bash
 .venv/bin/python tests/smoke_dinov3.py \
   --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml
+
 .venv/bin/python train_and_eval/segmentation_training_transf.py \
   --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml --device 0
 ```
 
-## Local validation status
+Use `configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml` for the variant that keeps the TSViT Spatial Transformer.
 
-DINOv3 Small has passed forward/backward checks, one AdamW update,
-training/evaluation through the original entrypoint, and checkpoint
-save/load checks using the real sample `10000_0.pickle`.
+Full fold training example (configure paths first):
 
-| Architecture | Real-sample smoke checks |
+```bash
+.venv/bin/python train_and_eval/segmentation_training_transf.py \
+  --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_fold1.yaml --device 0
+```
+
+The training script expects CUDA. Original TSViT checkpoints cannot be loaded directly into DINOv3 architectures; use matching architecture YAML and weights.
+
+CLI for this repo: `--config` and `--device` (not `--config_file` / `--gpu_ids` from [README_TSVIT.md](README_TSVIT.md)).
+
+More commands, troubleshooting, and checkpoint layout: [README_DINOV3.md](README_DINOV3.md).
+
+---
+
+## Validation status (local)
+
+DINOv3 Small passed forward/backward checks, one optimizer step, entrypoint train/eval, and checkpoint save/load on real sample `10000_0.pickle`.
+
+| Architecture | Smoke |
 | --- | --- |
 | `TSViT_DINOv3` | Passed |
 | `TSViT_DINOv3_Temporal` | Passed |
 
-Conditions: batch size 1, T=60, RGB, and a frozen backbone. The local checks
-use the same sample for a training step and an evaluation pass. They verify
-execution and checkpoint handling only. No segmentation quality results
-are available yet. Full PASTIS24 training, separate evaluation splits, and
-the Base/Satellite checkpoints have not been evaluated.
+Setup: batch size 1, T=60, RGB, frozen backbone. These checks verify execution only—not segmentation quality. Reports:
 
-Detailed logs, checksums, and memory diagnostics are retained in the
-validation reports:
+- [Two-Transformer variant](docs/dinov3-smoke.md)
+- [Temporal variant](docs/dinov3-temporal-smoke.md)
 
-- [Patch embedding replacement](docs/dinov3-smoke.md).
-- [DINOv3 with the TSViT temporal encoder](docs/dinov3-temporal-smoke.md).
+---
 
-## Documentation and references
+## References
 
-- [DINOv3 integration and usage guide](README_DINOV3.md).
-- [Original TSViT documentation](README_TSVIT.md), [Context-self contrastive learning](README_CSCL.md).
-- [ViTs for SITS — Tarasiou et al., CVPR 2023](https://arxiv.org/abs/2301.04944).
-- [Context-self contrastive pretraining — Tarasiou et al., TGRS 2022](https://ieeexplore.ieee.org/abstract/document/9854891).
-- [DINOv3 source code and models](https://github.com/facebookresearch/dinov3).
+- [DINOv3 integration guide](README_DINOV3.md)
+- [Original TSViT documentation and PASTIS24 baselines](README_TSVIT.md)
+- [Context-self contrastive learning](README_CSCL.md)
+- [ViTs for SITS — Tarasiou et al., CVPR 2023](https://arxiv.org/abs/2301.04944)
+- [DINOv3 — Meta](https://github.com/facebookresearch/dinov3)
 
-DeepSatModels source code is distributed under the [Apache License 2.0](LICENSE.txt).
-DINOv3 weights are subject to the license included with each checkpoint.
+DeepSatModels: [Apache License 2.0](LICENSE.txt). DINOv3 weights follow each checkpoint’s license.
 
 Copyright © 2023 Michail Tarasiou.
