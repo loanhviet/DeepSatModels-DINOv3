@@ -31,5 +31,9 @@ def get_model(config, device):
         from models.TSViT.TSViTDINOv3 import TSViTDINOv3
         return TSViTDINOv3(model_config).to(device)
 
+    if model_config['architecture'] == "TSViT_DINOv3_Temporal":
+        from models.TSViT.TSViTDINOv3 import TSViTDINOv3Temporal
+        return TSViTDINOv3Temporal(model_config).to(device)
+
     else:
         raise NameError("Model architecture %s not found" % model_config['architecture'])

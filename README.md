@@ -10,6 +10,11 @@ and a trainable projection. It retains the original TSViT temporal/spatial
 Transformers, attention and segmentation head, plus the original PASTIS data,
 training and loss pipeline. The first version uses RGB only.
 
+A second architecture, `TSViT_DINOv3_Temporal`, keeps the same DINOv3 adapter,
+temporal Transformer and head, and removes the post-temporal TSViT spatial
+Transformer and its positional embedding. Both variants remain available
+for comparison; both use the original masked cross-entropy loss.
+
 See [README_DINOV3.md](README_DINOV3.md) for installation, configs, padding
 semantics, commands, real-sample smoke results and measured VRAM.
 

@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-18",
+  "first_backbone_commit": "af680b7e33aa8d13ac19502cebf6ff85ca126e30",
+  "original_files_still_unchanged": [
+    "models/TSViT/TSViTdense.py",
+    "models/TSViT/module.py",
+    "data/PASTIS24/dataloader.py",
+    "data/PASTIS24/data_transforms.py",
+    "metrics/loss_functions.py",
+    "metrics/numpy_metrics.py",
+    "metrics/torch_metrics.py"
+  ],
+  "source_sample_and_checkpoint": "../provenance.json",
+  "environment": "../environment-freeze.txt",
+  "scope": "Single-real-sample smoke; train and eval share the same sample. No quality benchmark.",
+  "gpu_measurement": "PyTorch allocator peak allocated/reserved, MiB; excludes non-PyTorch allocations."
+}

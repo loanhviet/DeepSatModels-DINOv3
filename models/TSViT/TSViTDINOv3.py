@@ -1,11 +1,11 @@
-"""DINOv3 patch features feeding the unchanged temporal/spatial TSViT."""
+"""Per-date DINOv3 features with TSViT temporal and optional spatial blocks."""
 import json
 from pathlib import Path
 
 import torch
 from torch import nn
 from torch.nn import functional as F
-from einops import rearrange
+from einops import rearrange, repeat
 from transformers import AutoModel
 
 from data.PASTIS24.data_transforms import Normalize
@@ -104,3 +104,44 @@ class TSViTDINOv3(TSViT):
     @property
     def trainable_params(self):
         return [parameter for parameter in self.parameters() if parameter.requires_grad]
+
+
+class TSViTDINOv3Temporal(TSViTDINOv3):
+    """Per-date DINOv3 spatial encoder, original temporal encoder and head.
+
+    This variant removes the post-temporal TSViT spatial encoder. The RGB
+    adapter, temporal attention, class tokens, DOY and padding stay unchanged.
+    """
+
+    def __init__(self, model_config):
+        # Reuse TSViT initialization without constructing spatial attention
+        # layers. Its unused spatial position embedding/norm are discarded.
+        super().__init__({**model_config, 'spatial_depth': 0})
+        del self.space_transformer
+        del self.space_pos_embedding
+
+    def forward(self, x):
+        x = x.permute(0, 1, 4, 2, 3)
+        b, t = x.shape[:2]
+        doy = (x[:, :, -1, 0, 0] * 365.0001).to(torch.int64)
+        doy = F.one_hot(doy, num_classes=366).to(torch.float32)
+        temporal_embedding = self.to_temporal_embedding_input(doy.reshape(-1, 366))
+        temporal_embedding = temporal_embedding.reshape(b, t, self.dim)
+
+        x = self.to_patch_embedding(x[:, :, :-1])
+        num_patches = self.num_patches_1d ** 2
+        x = x.reshape(b, num_patches, t, self.dim)
+        x = (x + temporal_embedding.unsqueeze(1)).reshape(-1, t, self.dim)
+        class_tokens = repeat(self.temporal_token, '() c d -> n c d', n=b * num_patches)
+        x = self.temporal_transformer(torch.cat((class_tokens, x), dim=1))
+        x = x[:, :self.num_classes]
+        x = x.reshape(b, num_patches, self.num_classes, self.dim)
+        x = x.permute(0, 2, 1, 3).reshape(b * self.num_classes, num_patches, self.dim)
+        # The original head reads temporal class tokens directly. Preserve
+        # embedding dropout but omit spatial positions and spatial attention.
+        x = self.dropout(x)
+        x = self.mlp_head(x.reshape(-1, self.dim))
+        x = x.reshape(b, self.num_classes, num_patches, self.patch_size ** 2)
+        return rearrange(x, 'b c (h w) (p1 p2) -> b c (h p1) (w p2)',
+                         h=self.num_patches_1d, w=self.num_patches_1d,
+                         p1=self.patch_size, p2=self.patch_size)

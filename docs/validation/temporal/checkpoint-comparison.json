@@ -1,0 +1,10 @@
+{
+  "temporal_entrypoint_matches_independent_step": {
+    "passed": true,
+    "state_tensors": 271
+  },
+  "backbone_variant_unchanged_since_first_commit": {
+    "passed": true,
+    "state_tensors": 318
+  }
+}

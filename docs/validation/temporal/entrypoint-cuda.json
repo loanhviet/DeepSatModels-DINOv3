@@ -1,0 +1,10 @@
+{
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "torch": "2.9.1+cu128",
+  "cuda": "12.8",
+  "peak_allocated_mib": 569.5810546875,
+  "peak_reserved_mib": 648.0,
+  "elapsed_seconds": 1.021647612000379,
+  "train_steps": 1,
+  "last_train_loss": 2.8545644283294678
+}

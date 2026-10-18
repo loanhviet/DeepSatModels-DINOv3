@@ -1,0 +1,55 @@
+MODEL:
+  architecture: TSViT_DINOv3_Temporal
+  img_res: 24
+  max_seq_len: 60
+  num_channels: 11
+  num_features: 16
+  num_classes: 19
+  ignore_background: false
+  dropout: 0.
+  patch_size: 2
+  dim: 128
+  temporal_depth: 4
+  heads: 4
+  pool: cls
+  dim_head: 32
+  emb_dropout: 0.
+  scale_dim: 4
+  dinov3_checkpoint: /home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/models/small
+  frame_chunk_size: 1
+
+DATASETS:
+  train:
+    dataset: PASTIS24_fold1
+    base_dir: /path/to/PASTIS24
+    paths: /path/to/PASTIS24/fold-paths/folds_1_123_paths.csv
+    batch_size: 1
+    num_workers: 0
+  eval:
+    dataset: PASTIS24_fold1
+    base_dir: /path/to/PASTIS24
+    paths: /path/to/PASTIS24/fold-paths/fold_4_paths.csv
+    batch_size: 1
+    num_workers: 0
+
+SOLVER:
+  seed: 42
+  num_epochs: 100
+  num_warmup_epochs: 10
+  loss_function: masked_cross_entropy
+  class_weights:
+  lr_scheduler: cosine
+  lr_base: 1e-3
+  lr_min: 5e-6
+  lr_start: 1e-8
+  num_cycles: 1
+  weight_decay: 0.
+
+CHECKPOINT:
+  load_from_checkpoint:
+  partial_restore: false
+  save_path: outputs/PASTIS24/TSViT_DINOv3_Temporal_small_fold1
+  train_metrics_steps: 250
+  eval_steps: 2000
+  save_steps: 2000
+  profile_cuda: true

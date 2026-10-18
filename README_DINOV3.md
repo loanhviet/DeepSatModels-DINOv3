@@ -5,7 +5,18 @@ Mục tiêu đầu tiên là chạy được semantic segmentation PASTIS24.
 **Thay patch embedding bằng backbone DINOv3 trích đặc trưng từng ngày;
 không thay toàn bộ encoder TSViT.** Bản này chỉ dùng RGB và đóng băng DINOv3.
 
-## Kiến trúc và các thay đổi
+Repo hiện có hai architecture, dùng config và checkpoint riêng:
+
+| Architecture | Các khối xử lý |
+| --- | --- |
+| `TSViT_DINOv3` (commit `af680b7`) | DINOv3 → Temporal TSViT → Spatial TSViT → head |
+| `TSViT_DINOv3_Temporal` | DINOv3 → Temporal TSViT → head |
+
+Phần mô tả ngay dưới là bản giữ cả hai Transformer; biến thể temporal được
+giải thích ở mục riêng bên dưới. Cả hai đều chỉ dùng RGB, DINOv3 Small đóng
+băng và cùng loss/data/train pipeline gốc.
+
+## Kiến trúc TSViT_DINOv3 và các thay đổi
 
 ```text
 Input gốc [B,T,24,24,11] = 10 band chuẩn hóa PASTIS + DOY
@@ -65,6 +76,56 @@ Backbone có `requires_grad=False`, luôn ở `eval()` kể cả sau `net.train(
 chỉ trích đặc trưng bên trong `torch.no_grad()`. Projection đặt bên ngoài
 vùng này. Các temporal/spatial Transformer, positional embeddings, token và
 head vẫn được train. `frame_chunk_size=1` giới hạn số ảnh qua DINO mỗi lượt.
+
+## Biến thể TSViT_DINOv3_Temporal
+
+```text
+RGB từng ngày → DINOv3 Small đóng băng → Projection(384,128)
+  → cộng embedding DOY → Temporal Transformer TSViT + token theo lớp
+  → mlp_head gốc + ghép patch 2×2 → logits [B,19,24,24]
+```
+
+Lớp `TSViTDINOv3Temporal` dùng lại adapter, temporal Transformer và head từ
+bản đầu. Constructor tái sử dụng khởi tạo TSViT với spatial depth bằng 0,
+sau đó loại bỏ module spatial và spatial positional embedding; không có
+trọng số `space_*` trong optimizer hay `state_dict` của biến thể này.
+`forward()` riêng bỏ bước cộng spatial position và chạy spatial Transformer.
+Temporal attention, LayerNorm, class tokens, embedding dropout, head và
+phép ghép patch giữ cấu trúc gốc. Không sửa file TSViT gốc.
+
+**Đây là DINOv3 encoder không gian + TSViT encoder thời gian**, không phải
+thay toàn bộ hai encoder của TSViT. DINOv3 xử lý không gian từng ngày trước
+khi TSViT gộp thời gian; không khẳng định khối spatial hậu temporal cũ là dư
+thừa hoặc bỏ nó sẽ tăng chất lượng.
+
+Quy tắc RGB, chuẩn hóa, chunk và padding giống bản đầu: zero feature trước
+projection, giữ bias sau projection, cộng DOY=0 cho padding; không thêm
+temporal attention mask. DINOv3 vẫn `eval()`/đóng băng, các phần còn lại được
+train bằng masked cross-entropy gốc.
+
+Config đầy đủ: `configs/PASTIS24/TSViT_DINOv3_Temporal_small_fold1.yaml`;
+điền đường dẫn train/eval như hướng dẫn config bên dưới. Config kiểm tra dùng
+mẫu thật sẵn có và `outputs/` riêng:
+
+```bash
+.venv/bin/python tests/smoke_dinov3.py \
+  --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml
+.venv/bin/python train_and_eval/segmentation_training_transf.py \
+  --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml --device 0
+```
+
+Để trống `load_from_checkpoint` cho lần chạy mới. Checkpoint hai architecture
+không strict-load chéo vì biến thể temporal không có trọng số spatial.
+Script kiểm chứng hỗ trợ cả hai architecture, kiểm tra thêm không còn
+module/trọng số spatial và so sánh logits với `TSViT.forward()` gốc khi bỏ
+qua spatial bằng Identity và đặt spatial positional embedding bằng 0.
+Kết quả bằng chính xác; đây chỉ là cách kiểm tra độc lập trong test, không
+phải cách cài đặt model dùng để train.
+
+Xem [báo cáo biến thể temporal](docs/dinov3-temporal-smoke.md). Cả hai bản
+mới qua kiểm tra một mẫu, chưa đánh giá train/validation tách biệt hay full
+PASTIS24. Loss ban đầu khác nhau không chứng minh bản nào tốt hơn; việc bỏ
+khởi tạo khối spatial cũng làm thay đổi chuỗi khởi tạo ngẫu nhiên của head.
 
 ## Môi trường riêng
 

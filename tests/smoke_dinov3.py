@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from data import get_dataloaders, get_loss_data_input
 from metrics.loss_functions import get_loss
 from models import get_model
+from models.TSViT.TSViTDINOv3 import TSViTDINOv3
 from models.TSViT.TSViTdense import TSViT, Transformer
 from models.TSViT.module import Attention
 from utils.config_files_utils import read_yaml
@@ -35,11 +36,13 @@ def backbone_digest(backbone):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default='configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml')
-    parser.add_argument('--output', default='outputs/dinov3-integration')
+    parser.add_argument('--output', help='Output directory (default depends on architecture)')
     args = parser.parse_args()
-    output = Path(args.output)
-    output.mkdir(parents=True, exist_ok=True)
     config = read_yaml(args.config)
+    temporal_only = config['MODEL']['architecture'] == 'TSViT_DINOv3_Temporal'
+    output = Path(args.output or ('outputs/dinov3-temporal-integration' if temporal_only
+                                 else 'outputs/dinov3-integration'))
+    output.mkdir(parents=True, exist_ok=True)
     if not torch.cuda.is_available():
         raise RuntimeError('CUDA is required for this VRAM smoke check')
     device = torch.device('cuda:0')
@@ -51,7 +54,7 @@ def main():
     criterion = get_loss(config, device)
 
     # Regress the original model with the same unmodified data and loss.
-    original = TSViT(config['MODEL']).to(device)
+    original = TSViT({**config['MODEL'], 'spatial_depth': 4}).to(device)
     original_logits = original(inputs)
     original_loss = criterion(original_logits.permute(0, 2, 3, 1), ground_truth)
     assert torch.isfinite(original_loss)
@@ -67,8 +70,15 @@ def main():
     torch.manual_seed(config['SOLVER']['seed'])
     net = get_model(config, device)
     adapter = net.to_patch_embedding
-    assert type(net).forward is TSViT.forward
-    for transformer in (net.temporal_transformer, net.space_transformer):
+    if temporal_only:
+        assert not hasattr(net, 'space_transformer')
+        assert not hasattr(net, 'space_pos_embedding')
+        assert not any(name.startswith('space_') for name in net.state_dict())
+        transformers = [net.temporal_transformer]
+    else:
+        assert type(net).forward is TSViT.forward
+        transformers = [net.temporal_transformer, net.space_transformer]
+    for transformer in transformers:
         assert type(transformer) is Transformer
         assert all(type(layer[0].fn) is Attention for layer in transformer.layers)
     net.train()
@@ -139,8 +149,11 @@ def main():
     assert torch.isfinite(loss)
     loss.backward()
     gradient_norms = {}
-    for prefix in ('to_patch_embedding.projection', 'to_temporal_embedding_input',
-                   'temporal_transformer', 'space_transformer', 'mlp_head'):
+    trainable_groups = ['to_patch_embedding.projection', 'to_temporal_embedding_input',
+                        'temporal_transformer', 'mlp_head', 'temporal_token']
+    if not temporal_only:
+        trainable_groups.extend(['space_transformer', 'space_pos_embedding'])
+    for prefix in trainable_groups:
         gradients = [p.grad for name, p in net.named_parameters() if name.startswith(prefix)]
         assert gradients and all(g is not None and torch.isfinite(g).all() for g in gradients)
         gradient_norms[prefix] = sum(g.norm().item() for g in gradients)
@@ -163,6 +176,25 @@ def main():
     net.eval()
     with torch.no_grad():
         reference = net(inputs)
+    if temporal_only:
+        # Independently reuse the ORIGINAL TSViT.forward with its spatial
+        # block bypassed, to verify token layout and head reconstruction.
+        original_forward = TSViTDINOv3({**config['MODEL'], 'spatial_depth': 0}).to(device)
+        original_forward.space_transformer = torch.nn.Identity()
+        with torch.no_grad():
+            original_forward.space_pos_embedding.zero_()
+        missing, unexpected = original_forward.load_state_dict(net.state_dict(), strict=False)
+        assert missing == ['space_pos_embedding'] and not unexpected
+        original_forward.eval()
+        with torch.no_grad():
+            torch.testing.assert_close(reference, original_forward(inputs), atol=0, rtol=0)
+            # Different pairs of real dates catch B/class/patch mixing that
+            # a batch-size-one test cannot detect.
+            two_samples = torch.cat((inputs[:, :2], inputs[:, 1:3]), dim=0)
+            torch.testing.assert_close(net(two_samples), original_forward(two_samples),
+                                       atol=0, rtol=0)
+        del two_samples
+        del original_forward
     checkpoint = output / 'roundtrip.pth'
     torch.save(net.state_dict(), checkpoint)
     restored = get_model(config, device)
@@ -174,6 +206,7 @@ def main():
 
     report = {
         'config': args.config,
+        'architecture': config['MODEL']['architecture'],
         'seed': config['SOLVER']['seed'],
         'python': platform.python_version(),
         'sample_path': str(Path(dataset.root_dir) / dataset.data_paths.iloc[0, 0]),
@@ -186,7 +219,14 @@ def main():
         'loss': loss.item(), 'rgb_max_abs_error': rgb_max_error,
         'gradient_norms': gradient_norms,
         'backbone_sha256_before_and_after': digest_before,
-        'backbone_unchanged': True, 'original_forward_and_attention': True,
+        'backbone_unchanged': True,
+        'inherited_original_forward': not temporal_only,
+        'original_temporal_attention': True,
+        'spatial_encoder_removed': temporal_only,
+        'bypassed_original_forward_exact': temporal_only,
+        'batch_size_two_forward_exact': temporal_only,
+        'trainable_parameters': sum(p.numel() for p in net.parameters() if p.requires_grad),
+        'frozen_parameters': sum(p.numel() for p in net.parameters() if not p.requires_grad),
         'padding_after_projection': 'projection.bias (no new attention mask)',
         'checkpoint_roundtrip_exact': True,
         'batch_time_patch_order_and_chunking': True,
