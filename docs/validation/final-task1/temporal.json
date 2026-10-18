@@ -1,0 +1,135 @@
+{
+  "verified_at_utc": "2026-10-18T09:22:35.019465+00:00",
+  "source_sha256": {
+    "models/TSViT/TSViTDINOv3.py": "caff3c83926bd60b5c1efd3c1659cbf5bcbf40fd70fe8d993d748e416164b253",
+    "metrics/loss_functions.py": "463c5ebb66b6f0b63160ea8a2abfbe8cd463c27b2bc4ba85a940a058fbd64610",
+    "tests/smoke_dinov3.py": "0e7b436cbb51bdff1456b23775b6f278394e739dbe405695cd6aa0c354b075df",
+    "utils/torch_utils.py": "07462ed49e4a026fc57f848e8ae485b1eba9076cc502f5b925fef13839ac27f7",
+    "train_and_eval/segmentation_training_transf.py": "7a4341c8bd6da65d9a7c7e7b6c162d43c570ce2b0a02c78e7caa62e457146c79"
+  },
+  "config": "configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml",
+  "architecture": "TSViT_DINOv3_Temporal",
+  "seed": 42,
+  "python": "3.13.14",
+  "transformers": "4.57.6",
+  "sample_path": "/home/viet/projects/TLU/TSViT/crop-map/data_collection/outputs/reference_comparison/10000_0.pickle",
+  "sample_sha256": "4852e58f320e8b1d7aedba527fa427870d9eeb434892a1931e549150931f3766",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "torch": "2.9.1+cu128",
+  "cuda": "12.8",
+  "input_shape": [
+    1,
+    60,
+    24,
+    24,
+    11
+  ],
+  "logits_shape": [
+    1,
+    19,
+    24,
+    24
+  ],
+  "real_frames": 43,
+  "padding_frames": 17,
+  "valid_label_pixels": 521,
+  "loss": 2.8545644283294678,
+  "rgb_max_abs_error": 0.0,
+  "gradient_norms": {
+    "to_patch_embedding.projection": 0.3911851942539215,
+    "to_temporal_embedding_input": 0.18956733494997025,
+    "temporal_transformer": 6.436250329948962,
+    "mlp_head": 2.4304188645670144,
+    "temporal_token": 0.11003878712654114
+  },
+  "gradient_norms_definition": "Legacy sum of per-tensor L2 gradient norms",
+  "gradient_l2": {
+    "to_patch_embedding.projection": 0.3045223179127712,
+    "to_temporal_embedding_input": 0.13490385068888147,
+    "temporal_transformer": 1.8444373430915315,
+    "mlp_head": 2.3102137563873124,
+    "temporal_token": 0.11003878835502925
+  },
+  "gradient_l2_definition": "L2 over all gradient elements in each group; float64 accumulation",
+  "parameter_updates": {
+    "to_patch_embedding.projection": {
+      "delta_l2": 0.22195334757525256,
+      "delta_max_abs": 0.0010000001639127731,
+      "changed_tensors": 2,
+      "total_tensors": 2
+    },
+    "to_temporal_embedding_input": {
+      "delta_l2": 0.07326032558527644,
+      "delta_max_abs": 0.0010000001639127731,
+      "changed_tensors": 2,
+      "total_tensors": 2
+    },
+    "temporal_transformer": {
+      "delta_l2": 0.8896872130005258,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 46,
+      "total_tensors": 46
+    },
+    "mlp_head": {
+      "delta_l2": 0.025313519365214532,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 4,
+      "total_tensors": 4
+    },
+    "temporal_token": {
+      "delta_l2": 0.049312232067885105,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 1,
+      "total_tensors": 1
+    }
+  },
+  "weights_unchanged_after_backward_before_step": true,
+  "optimizer": {
+    "class": "AdamW",
+    "parameter_helper": "utils.torch_utils.get_net_trainable_params",
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "trainable_parameter_tensors": 55,
+    "optimizer_parameter_tensors": 55,
+    "exact_trainable_coverage_no_duplicates": true
+  },
+  "loss_and_logits_gradient_match_valid_pixel_cross_entropy": true,
+  "void_logits_gradient_max_abs": 0.0,
+  "pretrained_checkpoint": "/home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/models/small/model.safetensors",
+  "pretrained_checkpoint_sha256": "4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d",
+  "pretrained_tensors_exactly_loaded": 211,
+  "backbone_sha256_before": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_sha256_after": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_sha256_before_and_after": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_unchanged": true,
+  "inherited_original_forward": false,
+  "original_temporal_attention": true,
+  "spatial_encoder_removed": true,
+  "bypassed_original_forward_exact": true,
+  "batch_size_two_forward_exact": true,
+  "trainable_parameters": 891268,
+  "frozen_parameters": 21596544,
+  "padding_after_projection": "projection.bias (no new attention mask)",
+  "checkpoint_roundtrip_exact": true,
+  "batch_time_patch_order_and_chunking": true,
+  "original_tsvit": {
+    "logits_shape": [
+      1,
+      19,
+      24,
+      24
+    ],
+    "loss": 3.0058653354644775
+  },
+  "forward_backward_profile": {
+    "elapsed_seconds": 0.8369640189994243,
+    "peak_allocated_mib": 574.32275390625,
+    "peak_reserved_mib": 660.0
+  },
+  "checkpoint_path": "outputs/task1-final/temporal/roundtrip.pth"
+}

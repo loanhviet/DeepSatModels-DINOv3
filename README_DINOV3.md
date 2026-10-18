@@ -67,7 +67,7 @@ used for feature extraction. Resizing is confined to the adapter, adds no
 new image detail, and does not resize labels. Output logits have shape
 `[B,19,24,24]`; the original entrypoint rearranges them for the loss.
 Classes 0–18 are included in training, while void label 19 is excluded by
-the label mask. The loss remains unchanged because the prediction format,
+the label mask. The valid-pixel loss objective remains unchanged because the prediction format,
 labels, and segmentation objective are unchanged.
 
 ### Padding and attention
@@ -100,9 +100,11 @@ used to introduce an attention mask. Both variants use this padding policy.
 | [tests/smoke_dinov3.py](tests/smoke_dinov3.py) | Real-sample, gradient, padding, and save/load checks | Validate the integration |
 
 The original TSViT encoder/attention files, PASTIS loader/transforms, and
-loss/metric implementations are unchanged. AdamW, the scheduler, and weight
-saving continue to use the original pipeline. Checksums are recorded in
-[the provenance report](docs/validation/provenance.json).
+metrics are unchanged. The final Task 1 review preserves the valid-pixel loss
+formula but adds an empty-mean error and explicit log-softmax class axis.
+AdamW, the scheduler, and weight saving continue to use the original pipeline.
+Earlier checksums are recorded in [the historical provenance report](docs/validation/provenance.json);
+current source hashes and measurements are in [final validation](docs/validation/final-task1/provenance.json).
 
 | Commit | Change |
 | --- | --- |
@@ -111,7 +113,21 @@ saving continue to use the original pipeline. Checksums are recorded in
 
 ## 3. Environment and checkpoints
 
-Create the separate environment described in the [main README](README.md#installation).
+The tested Small checkpoint is Meta's
+[facebook/dinov3-vits16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m),
+revision `114c1379950215c8b35dfcd4e90a5c251dde0d32`.
+Obtain access through the official Hugging Face page and place the files below
+in a local directory. No weights were downloaded during the final review.
+
+From the repository root, create the tested environment:
+
+```bash
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python torch==2.9.1 torchvision==0.24.1 \
+  --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python .venv/bin/python -r requirements-dinov3.txt
+```
+
 The tested package versions are recorded in
 [environment-freeze.txt](docs/validation/environment-freeze.txt).
 The training entrypoint requires CUDA; it does not currently allow CPU execution.

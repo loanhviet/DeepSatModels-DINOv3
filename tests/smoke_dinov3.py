@@ -10,11 +10,14 @@ from pathlib import Path
 import platform
 import sys
 import time
+from datetime import datetime, timezone
+from importlib.metadata import version
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 import torch.nn.functional as F
+from safetensors.torch import load_file
 
 from data import get_dataloaders, get_loss_data_input
 from metrics.loss_functions import get_loss
@@ -23,7 +26,7 @@ from models.TSViT.TSViTDINOv3 import TSViTDINOv3
 from models.TSViT.TSViTdense import TSViT, Transformer
 from models.TSViT.module import Attention
 from utils.config_files_utils import read_yaml
-from utils.torch_utils import load_from_checkpoint
+from utils.torch_utils import get_net_trainable_params, load_from_checkpoint
 
 
 def backbone_digest(backbone):
@@ -82,8 +85,16 @@ def main():
         assert type(transformer) is Transformer
         assert all(type(layer[0].fn) is Attention for layer in transformer.layers)
     net.train()
-    assert not adapter.backbone.training
+    assert not any(module.training for module in adapter.backbone.modules())
     assert not any(p.requires_grad for p in adapter.backbone.parameters())
+    pretrained_path = Path(config['MODEL']['dinov3_checkpoint']).expanduser() / 'model.safetensors'
+    pretrained = load_file(str(pretrained_path))
+    loaded = adapter.backbone.state_dict()
+    assert loaded.keys() == pretrained.keys()
+    for name, value in loaded.items():
+        assert torch.equal(value.detach().cpu(), pretrained[name]), name
+    pretrained_tensor_count = len(pretrained)
+    del pretrained, loaded
     digest_before = backbone_digest(adapter.backbone)
 
     # An entirely padded chunk must skip DINO and retain projection bias.
@@ -126,8 +137,13 @@ def main():
     captured = {}
     hook = adapter.register_forward_hook(
         lambda module, arguments, result: captured.update(embedding=result.detach().clone()))
-    optimizer = torch.optim.AdamW(net.trainable_params, lr=float(config['SOLVER']['lr_base']),
+    optimizer = torch.optim.AdamW(get_net_trainable_params(net), lr=float(config['SOLVER']['lr_base']),
                                  weight_decay=float(config['SOLVER'].get('weight_decay', 0)))
+    optimizer_params = [p for group in optimizer.param_groups for p in group['params']]
+    expected_ids = {id(p) for p in net.parameters() if p.requires_grad}
+    assert {id(p) for p in optimizer_params} == expected_ids
+    assert len(optimizer_params) == len(expected_ids)
+    optimizer.zero_grad()
     before = {name: parameter.detach().clone() for name, parameter in net.named_parameters()
               if parameter.requires_grad}
     logits = net(inputs)
@@ -147,8 +163,22 @@ def main():
 
     loss = criterion(logits.permute(0, 2, 3, 1), ground_truth)
     assert torch.isfinite(loss)
+    labels, mask = ground_truth
+    valid = mask.squeeze(-1)
+    assert torch.equal(mask, labels != 19)
+    reference_loss = F.cross_entropy(logits.permute(0, 2, 3, 1)[valid],
+                                     labels.squeeze(-1)[valid].long())
+    torch.testing.assert_close(loss, reference_loss)
+    actual_gradient, = torch.autograd.grad(loss, logits, retain_graph=True)
+    expected_gradient, = torch.autograd.grad(reference_loss, logits, retain_graph=True)
+    torch.testing.assert_close(actual_gradient, expected_gradient)
+    void_gradient = actual_gradient.permute(0, 2, 3, 1)[~valid]
+    assert void_gradient.numel() > 0 and torch.count_nonzero(void_gradient) == 0
+    void_gradient_max = void_gradient.abs().max().item()
+    del reference_loss, actual_gradient, expected_gradient, void_gradient
     loss.backward()
     gradient_norms = {}
+    gradient_l2 = {}
     trainable_groups = ['to_patch_embedding.projection', 'to_temporal_embedding_input',
                         'temporal_transformer', 'mlp_head', 'temporal_token']
     if not temporal_only:
@@ -158,12 +188,25 @@ def main():
         assert gradients and all(g is not None and torch.isfinite(g).all() for g in gradients)
         gradient_norms[prefix] = sum(g.norm().item() for g in gradients)
         assert gradient_norms[prefix] > 0
+        gradient_l2[prefix] = sum(g.double().square().sum().item() for g in gradients) ** 0.5
     assert all(p.grad is None for p in adapter.backbone.parameters())
+    assert all(torch.equal(before[name], p) for name, p in net.named_parameters() if name in before)
     optimizer.step()
+    parameter_updates = {}
     for prefix in gradient_norms:
-        assert any(not torch.equal(before[name], p) for name, p in net.named_parameters()
-                   if name.startswith(prefix) and name in before)
-    assert digest_before == backbone_digest(adapter.backbone)
+        deltas = [(p.detach() - before[name]).double() for name, p in net.named_parameters()
+                  if name in before and name.startswith(prefix)]
+        assert all(torch.isfinite(delta).all() for delta in deltas)
+        changed = sum(bool(torch.count_nonzero(delta)) for delta in deltas)
+        parameter_updates[prefix] = {
+            'delta_l2': sum(delta.square().sum().item() for delta in deltas) ** 0.5,
+            'delta_max_abs': max(delta.abs().max().item() for delta in deltas),
+            'changed_tensors': changed,
+            'total_tensors': len(deltas),
+        }
+        assert changed > 0
+    digest_after = backbone_digest(adapter.backbone)
+    assert digest_before == digest_after
     assert not adapter.backbone.training
     torch.cuda.synchronize(device)
     forward_backward_profile = {
@@ -205,10 +248,18 @@ def main():
     torch.testing.assert_close(reference, reloaded, atol=0, rtol=0)
 
     report = {
+        'verified_at_utc': datetime.now(timezone.utc).isoformat(),
+        'source_sha256': {
+            path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            for path in ['models/TSViT/TSViTDINOv3.py', 'metrics/loss_functions.py',
+                         'tests/smoke_dinov3.py', 'utils/torch_utils.py',
+                         'train_and_eval/segmentation_training_transf.py']
+        },
         'config': args.config,
         'architecture': config['MODEL']['architecture'],
         'seed': config['SOLVER']['seed'],
         'python': platform.python_version(),
+        'transformers': version('transformers'),
         'sample_path': str(Path(dataset.root_dir) / dataset.data_paths.iloc[0, 0]),
         'sample_sha256': hashlib.sha256((Path(dataset.root_dir) / dataset.data_paths.iloc[0, 0]).read_bytes()).hexdigest(),
         'device': torch.cuda.get_device_name(device),
@@ -218,6 +269,29 @@ def main():
         'valid_label_pixels': int(ground_truth[1].sum()),
         'loss': loss.item(), 'rgb_max_abs_error': rgb_max_error,
         'gradient_norms': gradient_norms,
+        'gradient_norms_definition': 'Legacy sum of per-tensor L2 gradient norms',
+        'gradient_l2': gradient_l2,
+        'gradient_l2_definition': 'L2 over all gradient elements in each group; float64 accumulation',
+        'parameter_updates': parameter_updates,
+        'weights_unchanged_after_backward_before_step': True,
+        'optimizer': {
+            'class': type(optimizer).__name__,
+            'parameter_helper': 'utils.torch_utils.get_net_trainable_params',
+            'lr': optimizer.param_groups[0]['lr'],
+            'weight_decay': optimizer.param_groups[0]['weight_decay'],
+            'betas': list(optimizer.param_groups[0]['betas']),
+            'eps': optimizer.param_groups[0]['eps'],
+            'trainable_parameter_tensors': len(expected_ids),
+            'optimizer_parameter_tensors': len(optimizer_params),
+            'exact_trainable_coverage_no_duplicates': True,
+        },
+        'loss_and_logits_gradient_match_valid_pixel_cross_entropy': True,
+        'void_logits_gradient_max_abs': void_gradient_max,
+        'pretrained_checkpoint': str(pretrained_path),
+        'pretrained_checkpoint_sha256': hashlib.sha256(pretrained_path.read_bytes()).hexdigest(),
+        'pretrained_tensors_exactly_loaded': pretrained_tensor_count,
+        'backbone_sha256_before': digest_before,
+        'backbone_sha256_after': digest_after,
         'backbone_sha256_before_and_after': digest_before,
         'backbone_unchanged': True,
         'inherited_original_forward': not temporal_only,

@@ -1,0 +1,49 @@
+{
+  "verified_at_utc": "2026-10-18T09:23:03.119402+00:00",
+  "upstream_baseline": "53e655936be088522ec419b3ead38684c20ae1ec",
+  "working_tree_base_commit": "abdea715ce277a6b7a2757470b9c7f2f3e0738cf",
+  "checkpoint": {
+    "repo": "facebook/dinov3-vits16-pretrain-lvd1689m",
+    "revision": "114c1379950215c8b35dfcd4e90a5c251dde0d32",
+    "model_url": "https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m",
+    "file": "model.safetensors",
+    "sha256": "4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d",
+    "bytes": 86406384,
+    "source_record": "Existing crop-map/preparation/dinov3/manifest.json; local file hash matches recorded upstream SHA256"
+  },
+  "loss_tests": {
+    "command": ".venv/bin/python -m unittest discover -s tests -p test_masked_cross_entropy.py -v",
+    "exit_code": 0,
+    "passed": 4,
+    "log": "loss-tests.log"
+  },
+  "smoke_commands": [
+    ".venv/bin/python tests/smoke_dinov3.py --config configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml --output outputs/task1-final/dinov3",
+    ".venv/bin/python tests/smoke_dinov3.py --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml --output outputs/task1-final/temporal"
+  ],
+  "valid_pixel_post_step_weights_vs_historical_smoke": {
+    "dinov3": {
+      "reference_checkpoint": "outputs/dinov3-integration/roundtrip.pth",
+      "equal_state_tensors": 318,
+      "total_state_tensors": 318,
+      "all_equal": true
+    },
+    "temporal": {
+      "reference_checkpoint": "outputs/dinov3-temporal-integration/roundtrip.pth",
+      "equal_state_tensors": 271,
+      "total_state_tensors": 271,
+      "all_equal": true
+    }
+  },
+  "source_sha256": {
+    "metrics/loss_functions.py": "463c5ebb66b6f0b63160ea8a2abfbe8cd463c27b2bc4ba85a940a058fbd64610",
+    "tests/test_masked_cross_entropy.py": "7294b9361b167a85299400c13f3f6129d0531d2b40bfc607129ce04d27b95b1e",
+    "tests/smoke_dinov3.py": "0e7b436cbb51bdff1456b23775b6f278394e739dbe405695cd6aa0c354b075df",
+    "models/TSViT/TSViTDINOv3.py": "caff3c83926bd60b5c1efd3c1659cbf5bcbf40fd70fe8d993d748e416164b253",
+    "models/TSViT/TSViTdense.py": "6276bc57b85495449500c1d6da0dfb412baf16f16626d5af9aa9ffe5c8f9ef38",
+    "utils/torch_utils.py": "07462ed49e4a026fc57f848e8ae485b1eba9076cc502f5b925fef13839ac27f7",
+    "train_and_eval/segmentation_training_transf.py": "7a4341c8bd6da65d9a7c7e7b6c162d43c570ce2b0a02c78e7caa62e457146c79"
+  },
+  "scope": "One real sample; no full training, no model/dataset downloads, no multi-GPU or held-out accuracy assessment.",
+  "empty_mean_policy": "Raise ValueError before backward and optimizer.step; preserve unreduced empty output."
+}

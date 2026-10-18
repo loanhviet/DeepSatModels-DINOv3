@@ -1,0 +1,12 @@
+$ .venv/bin/python -m unittest discover -s tests -p test_masked_cross_entropy.py -v
+test_all_void_stops_before_optimizer_update (test_masked_cross_entropy.MaskedCrossEntropyTests.test_all_void_stops_before_optimizer_update) ... ok
+test_all_void_unreduced_output_remains_empty (test_masked_cross_entropy.MaskedCrossEntropyTests.test_all_void_unreduced_output_remains_empty) ... ok
+test_no_mask_preserves_cross_entropy (test_masked_cross_entropy.MaskedCrossEntropyTests.test_no_mask_preserves_cross_entropy) ... ok
+test_valid_pixels_preserve_original_values_and_gradients (test_masked_cross_entropy.MaskedCrossEntropyTests.test_valid_pixels_preserve_original_values_and_gradients) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.627s
+
+OK
+
+exit_code=0
