@@ -1,111 +1,186 @@
-# Task 1: DINOv3 patch embedding cho TSViT
+# DINOv3 Integration with TSViT
 
-Bản gốc: commit `53e655936be088522ec419b3ead38684c20ae1ec`.
-Mục tiêu đầu tiên là chạy được semantic segmentation PASTIS24.
-**Thay patch embedding bằng backbone DINOv3 trích đặc trưng từng ngày;
-không thay toàn bộ encoder TSViT.** Bản này chỉ dùng RGB và đóng băng DINOv3.
+This guide documents changes from DeepSatModels at commit `53e6559` and
+explains how to reproduce the validation runs. The supported configuration
+is semantic segmentation on PASTIS24, producing a 24×24 output map with
+19 classes.
 
-Repo hiện có hai architecture, dùng config và checkpoint riêng:
+Local smoke checks verify the implementation on a small real sample. Full
+training and evaluation on separate splits have not been performed.
 
-| Architecture | Các khối xử lý |
+## 1. Architecture
+
+```text
+Original TSViT:
+Images → Patch embedding → Temporal Transformer → Spatial Transformer → Head
+
+TSViT_DINOv3:
+Images → RGB adapter → DINOv3 → Projection
+       → Temporal Transformer → Spatial Transformer → Head
+
+TSViT_DINOv3_Temporal:
+Images → RGB adapter → DINOv3 → Projection → Temporal Transformer → Head
+```
+
+| Component | `TSViT_DINOv3` | `TSViT_DINOv3_Temporal` |
+| --- | --- | --- |
+| DINOv3 | Frozen, always in `eval()` mode | Same |
+| Projection | Trainable | Trainable |
+| DOY embedding and class tokens | Original structure, trainable | Same |
+| Temporal Transformer | Original attention, trainable | Same |
+| TSViT spatial Transformer and spatial positional embedding | Retained and trainable | Removed |
+| Segmentation head and patch reconstruction | Original structure, trainable | Same |
+| Loss | Original masked cross-entropy | Same |
+
+Freezing means DINOv3 weights are not updated during training. The backbone
+runs inside `torch.no_grad()`, while the projection and remaining TSViT
+blocks receive gradients. With `frame_chunk_size=1`, one image is passed
+through DINOv3 at a time to limit memory use.
+
+`TSViT_DINOv3` replaces only `to_patch_embedding` and inherits
+`TSViT.forward()`. `TSViT_DINOv3_Temporal` uses a separate forward pass that
+connects temporal outputs directly to the head; it has no `space_*` modules
+or weights. It combines a DINOv3 spatial encoder with the TSViT temporal
+encoder. DINOv3 processes each image before temporal aggregation. Further
+experiments are needed to assess the effect of removing the spatial
+Transformer that originally followed temporal aggregation.
+
+### Input adaptation
+
+The original PASTIS transform returns `[B,T,24,24,11]`: ten normalized
+spectral bands and one day-of-year (DOY) channel. DOY is still passed to the
+original temporal embedding. The image adapter:
+
+1. Selects B04/B03/B02 as RGB, using indices `[2,1,0]` in PASTIS band order.
+2. Reverses normalization with `raw = normalized * std + mean`, using the
+   exact statistics from the original `Normalize` transform.
+3. Computes `rgb = clamp(raw / 10000, 0, 1)`, resizes bilinearly from 24×24
+   to 192×192, and applies the checkpoint's DINOv3 normalization statistics.
+4. Extracts patch tokens, excluding CLS and register tokens. The 192/16 = 12
+   patches per axis match the 24/2 = 12 patch grid used by TSViT.
+5. Projects Small's 384-dimensional features to TSViT's 128-dimensional space.
+
+The current implementation uses RGB only; the other seven bands are not
+used for feature extraction. Resizing is confined to the adapter, adds no
+new image detail, and does not resize labels. Output logits have shape
+`[B,19,24,24]`; the original entrypoint rearranges them for the loss.
+Classes 0–18 are included in training, while void label 19 is excluded by
+the label mask. The loss remains unchanged because the prediction format,
+labels, and segmentation objective are unchanged.
+
+### Padding and attention
+
+The original transform normalizes observations before padding entire
+frames, including DOY, with zeros. The adapter detects frames whose ten
+normalized bands are all zero, skips DINOv3 for them, and sets their
+features to zero before projection:
+
+```text
+Projected embedding of a padded frame = Linear(0) = projection.bias
+Temporal input = projection.bias + temporal_embedding(one_hot(DOY=0))
+```
+
+Embeddings are not zeroed again after projection. Temporal attention still
+includes padded positions, as in the original TSViT. `seq_lengths` is not
+used to introduce an attention mask. Both variants use this padding policy.
+
+## 2. Code changes and rationale
+
+| File or directory | Change | Reason |
+| --- | --- | --- |
+| [models/TSViT/TSViTDINOv3.py](models/TSViT/TSViTDINOv3.py) | Adapter and two model classes | Integrate DINOv3 while reusing TSViT blocks |
+| [models/__init__.py](models/__init__.py) | Register architectures; import `FCN_CRNN` only when selected | Select models through YAML; avoid requiring `torchfcn` for TSViT |
+| [data/__init__.py](data/__init__.py) | Allow paths in experiment configs; import the France loader only when needed | Configure datasets and prevent an indentation error in the original France loader from blocking PASTIS |
+| [data/datasets.yaml](data/datasets.yaml) | Remove an extra nesting level in fold1 | Match the loader's expected structure |
+| [utils/config_files_utils.py](utils/config_files_utils.py) | Use `safe_load` | Support current PyYAML versions |
+| [train_and_eval/segmentation_training_transf.py](train_and_eval/segmentation_training_transf.py) | Optional seed, VRAM reporting, and SummaryWriter cleanup | Reproduce and record runs |
+| [configs/PASTIS24](configs/PASTIS24), [requirements-dinov3.txt](requirements-dinov3.txt) | Separate configurations and dependencies | Specify environment, data, checkpoint, and output paths |
+| [tests/smoke_dinov3.py](tests/smoke_dinov3.py) | Real-sample, gradient, padding, and save/load checks | Validate the integration |
+
+The original TSViT encoder/attention files, PASTIS loader/transforms, and
+loss/metric implementations are unchanged. AdamW, the scheduler, and weight
+saving continue to use the original pipeline. Checksums are recorded in
+[the provenance report](docs/validation/provenance.json).
+
+| Commit | Change |
 | --- | --- |
-| `TSViT_DINOv3` (commit `af680b7`) | DINOv3 → Temporal TSViT → Spatial TSViT → head |
-| `TSViT_DINOv3_Temporal` | DINOv3 → Temporal TSViT → head |
+| `af680b7` | Replace patch embedding with DINOv3; retain both TSViT Transformers |
+| `532341c` | Add the temporal variant without the TSViT spatial Transformer |
 
-Phần mô tả ngay dưới là bản giữ cả hai Transformer; biến thể temporal được
-giải thích ở mục riêng bên dưới. Cả hai đều chỉ dùng RGB, DINOv3 Small đóng
-băng và cùng loss/data/train pipeline gốc.
+## 3. Environment and checkpoints
 
-## Kiến trúc TSViT_DINOv3 và các thay đổi
+Create the separate environment described in the [main README](README.md#installation).
+The tested package versions are recorded in
+[environment-freeze.txt](docs/validation/environment-freeze.txt).
+The training entrypoint requires CUDA; it does not currently allow CPU execution.
 
-```text
-Input gốc [B,T,24,24,11] = 10 band chuẩn hóa PASTIS + DOY
-  ├─ DOY → temporal embedding gốc (366 → 128)
-  └─ 10 band → RGB adapter → resize 192×192 → DINOv3 /16 đóng băng
-       → bỏ CLS/register tokens → [B,T,144,D] → Linear(D,128)
-       → [(B×144),T,128]
-  → cộng temporal embedding
-  → temporal Transformer + 19 token theo lớp, giữ nguyên
-  → spatial position embedding + spatial Transformer, giữ nguyên
-  → mlp_head (128 → 4) + dựng lại patch 2×2, giữ nguyên
-  → logits [B,19,24,24] → masked cross-entropy gốc
-```
-
-`models/TSViT/TSViTDINOv3.py` thêm subclass `TSViTDINOv3(TSViT)` và chỉ
-thay `self.to_patch_embedding`. Subclass **kế thừa nguyên `TSViT.forward()`**;
-không sửa `TSViTdense.py`, `module.py`, transforms PASTIS hay loss/metrics.
-Cả temporal và spatial attention vẫn là `Attention` gốc: Q/K/V, softmax,
-residual và LayerNorm như trước; không thêm attention mask.
-
-Adapter chọn B04/B03/B02 ở chỉ số `[2,1,0]` theo
-[notebook PASTIS chính thức](https://github.com/VSainteuf/pastis-benchmark/blob/main/demo.ipynb).
-Vì dataset đã chuẩn hóa, adapter tái sử dụng đúng mean/std từ `Normalize`
-gốc để tính `raw = normalized * std + mean`. Sau đó tính
-`rgb = clamp(raw / 10000, 0, 1)`, resize bilinear lên 192×192 rồi chuẩn hóa
-bằng `image_mean`/`image_std` trong `preprocessor_config.json` của checkpoint.
-Không chia thêm cho 255, không min-max từng ảnh. Chuyển thang phản xạ này là
-lựa chọn cho bản chạy đầu, chưa tối ưu chất lượng. Bảy band còn lại không
-tham gia trích đặc trưng; DOY vẫn dùng riêng như TSViT gốc.
-
-192/16 = 12 patch mỗi chiều, khớp lưới gốc 24/2 = 12; resize chỉ diễn ra
-trong adapter, không resize nhãn. Lấy token sau `1 + num_register_tokens`
-theo [giao diện DINOv3 Transformers](https://huggingface.co/docs/transformers/v4.57.1/en/model_doc/dinov3).
-Projection dùng D từ config checkpoint: Small 384, Base 768, Satellite 1024.
-Small/Base dùng mean/std ImageNet; Satellite dùng mean/std riêng, được đọc
-tự động từ file preprocessing. Chỉ Small đã được chạy kiểm chứng.
-
-### Padding sau projection và attention
-
-Transform gốc chuẩn hóa trước rồi pad toàn bộ frame, kể cả DOY, bằng 0.
-Adapter nhận diện frame có cả 10 band đã chuẩn hóa bằng 0, bỏ qua DINOv3 và
-điền **feature bằng 0 trước projection**. Vì projection có bias:
+`MODEL.dinov3_checkpoint` must point to a Hugging Face checkpoint directory:
 
 ```text
-patch embedding của frame padding = Linear(0) = projection.bias
-đầu vào temporal = projection.bias + temporal_embedding(one_hot(DOY=0))
+small/
+├── config.json
+├── model.safetensors
+└── preprocessor_config.json
 ```
 
-**Không zero lại embedding sau projection.** Cách này tương ứng với Linear
-nhúng patch gốc, vốn cũng trả về bias khi patch bằng 0. `DOY=0` vẫn là một
-one-hot được nhúng, không phải vector temporal embedding bằng 0. Các vị trí
-padding vẫn tham gia attention như TSViT gốc; `seq_lengths` không được thêm
-vào model và không dùng để tạo mask. Kiểm tra cả 17 frame padding của mẫu
-thật và trường hợp đầu vào toàn padding đã qua.
+The existing checkpoints are under
+`/home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/models/`, in the
+`small`, `base`, and `satellite` directories. The model loads them locally
+with `AutoModel.from_pretrained(..., local_files_only=True)` and does not
+automatically download weights. These are not `.pth` files for `torch.hub`.
 
-Backbone có `requires_grad=False`, luôn ở `eval()` kể cả sau `net.train()`;
-chỉ trích đặc trưng bên trong `torch.no_grad()`. Projection đặt bên ngoài
-vùng này. Các temporal/spatial Transformer, positional embeddings, token và
-head vẫn được train. `frame_chunk_size=1` giới hạn số ảnh qua DINO mỗi lượt.
+Small/Base/Satellite have feature dimensions 384/768/1024. The adapter reads
+the feature dimension and normalization statistics from the selected
+checkpoint. Only Small has been validated. On another machine, update the
+YAML paths without editing Python code.
 
-## Biến thể TSViT_DINOv3_Temporal
+## 4. Data and configuration paths
+
+Data source: [PASTIS24 on Drive](https://drive.google.com/drive/u/0/folders/1-ymz_s6-3BCUcLqNDJ67VKiSTx2n4Glw).
+The loader reads pickle files rather than GeoTIFF images. Each sample contains:
+
+| Key | Contents |
+| --- | --- |
+| `img` | Unnormalized imagery, `[T,10,24,24]` |
+| `doy` | Acquisition day of year, `[T]` |
+| `labels` | Label planes, `[L,24,24]`; the pipeline uses `labels[0]` |
+
+Path CSVs have one column and no header. The loader joins `base_dir` with
+each CSV entry to locate its pickle file. If an entry is
+`pickle24x24/10000_0.pickle`, `base_dir` should point to the PASTIS24 root.
+The repository's smoke CSV contains only `10000_0.pickle`, so its `base_dir`
+must point directly to the directory containing that file.
+
+The sample used for validation is currently at:
 
 ```text
-RGB từng ngày → DINOv3 Small đóng băng → Projection(384,128)
-  → cộng embedding DOY → Temporal Transformer TSViT + token theo lớp
-  → mlp_head gốc + ghép patch 2×2 → logits [B,19,24,24]
+/home/viet/projects/TLU/TSViT/crop-map/data_collection/outputs/reference_comparison/10000_0.pickle
 ```
 
-Lớp `TSViTDINOv3Temporal` dùng lại adapter, temporal Transformer và head từ
-bản đầu. Constructor tái sử dụng khởi tạo TSViT với spatial depth bằng 0,
-sau đó loại bỏ module spatial và spatial positional embedding; không có
-trọng số `space_*` trong optimizer hay `state_dict` của biến thể này.
-`forward()` riêng bỏ bước cộng spatial position và chạy spatial Transformer.
-Temporal attention, LayerNorm, class tokens, embedding dropout, head và
-phép ghép patch giữ cấu trúc gốc. Không sửa file TSViT gốc.
+On another machine, place the sample in a local data directory and update YAML:
 
-**Đây là DINOv3 encoder không gian + TSViT encoder thời gian**, không phải
-thay toàn bộ hai encoder của TSViT. DINOv3 xử lý không gian từng ngày trước
-khi TSViT gộp thời gian; không khẳng định khối spatial hậu temporal cũ là dư
-thừa hoặc bỏ nó sẽ tăng chất lượng.
+| Field | Required value |
+| --- | --- |
+| `MODEL.dinov3_checkpoint` | Local DINOv3 checkpoint directory |
+| `DATASETS.train/eval.base_dir` | Data root matching the CSV entries |
+| `DATASETS.train/eval.paths` | Path CSV for each split |
+| `CHECKPOINT.save_path` | Output directory |
+| `CHECKPOINT.load_from_checkpoint` | Leave empty for a new training run |
 
-Quy tắc RGB, chuẩn hóa, chunk và padding giống bản đầu: zero feature trước
-projection, giữ bias sau projection, cộng DOY=0 cho padding; không thêm
-temporal attention mask. DINOv3 vẫn `eval()`/đóng băng, các phần còn lại được
-train bằng masked cross-entropy gốc.
+If `base_dir` or `paths` is omitted, the loader falls back to
+`data/datasets.yaml`. Run all commands from the repository root so that
+relative paths resolve correctly.
 
-Config đầy đủ: `configs/PASTIS24/TSViT_DINOv3_Temporal_small_fold1.yaml`;
-điền đường dẫn train/eval như hướng dẫn config bên dưới. Config kiểm tra dùng
-mẫu thật sẵn có và `outputs/` riêng:
+## 5. Validation and training
+
+### Local real-sample smoke checks
+
+| Architecture | Smoke configuration |
+| --- | --- |
+| `TSViT_DINOv3` | `configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml` |
+| `TSViT_DINOv3_Temporal` | `configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml` |
+
+For the temporal variant, after configuring the paths:
 
 ```bash
 .venv/bin/python tests/smoke_dinov3.py \
@@ -114,110 +189,85 @@ mẫu thật sẵn có và `outputs/` riêng:
   --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml --device 0
 ```
 
-Để trống `load_from_checkpoint` cho lần chạy mới. Checkpoint hai architecture
-không strict-load chéo vì biến thể temporal không có trọng số spatial.
-Script kiểm chứng hỗ trợ cả hai architecture, kiểm tra thêm không còn
-module/trọng số spatial và so sánh logits với `TSViT.forward()` gốc khi bỏ
-qua spatial bằng Identity và đặt spatial positional embedding bằng 0.
-Kết quả bằng chính xác; đây chỉ là cách kiểm tra độc lập trong test, không
-phải cách cài đặt model dùng để train.
+The first command requires CUDA and a single-sample configuration with batch
+size 1 and T=60. Success means exit code 0 and a report at
+`outputs/dinov3-temporal-integration/result.json`: logits `[1,19,24,24]`,
+finite loss/gradients, an unchanged backbone, and matching save/load outputs.
+It also checks RGB preprocessing, token order, and padding.
 
-Xem [báo cáo biến thể temporal](docs/dinov3-temporal-smoke.md). Cả hai bản
-mới qua kiểm tra một mẫu, chưa đánh giá train/validation tách biệt hay full
-PASTIS24. Loss ban đầu khác nhau không chứng minh bản nào tốt hơn; việc bỏ
-khởi tạo khối spatial cũng làm thay đổi chuỗi khởi tạo ngẫu nhiên của head.
+The second command runs one epoch with one training step and one evaluation
+pass through the original entrypoint. The default configuration writes the
+run configuration, `1epoch_1step.pth`, `best.pth`, TensorBoard files, and
+`cuda_memory.json` to `outputs/dinov3-temporal-smoke-entrypoint/`.
+Set `CHECKPOINT.profile_cuda: true` to enable VRAM reporting.
 
-## Môi trường riêng
+Use the `TSViT_DINOv3` smoke configuration to check the variant retaining
+both Transformers. Its default output directories are
+`outputs/dinov3-integration/` and `outputs/dinov3-smoke-entrypoint/`.
+The `outputs/` directory is excluded from Git.
 
-Chạy từ thư mục gốc repo. Không dùng hoặc thay môi trường `crop-map/.venv`.
-Bộ conda Python 3.8/CUDA 10.1 gốc không phù hợp với nhánh DINOv3 này.
+### Full training
 
-```bash
-uv venv --python 3.13 .venv
-uv pip install --python .venv/bin/python torch==2.9.1 torchvision==0.24.1 \
-  --index-url https://download.pytorch.org/whl/cu128
-uv pip install --python .venv/bin/python -r requirements-dinov3.txt
-```
+The fold1 configurations provide starting points for full training. Before
+running, set the data, checkpoint, and output paths as described above, and
+verify that the training and evaluation CSVs use the intended separate
+splits. The configuration uses 100 epochs, batch size 1, and saves/evaluates
+every 2,000 steps. These settings have not been validated on a full run.
 
-Cặp torch/torchvision lấy từ [hướng dẫn PyTorch](https://pytorch.org/get-started/previous-versions/).
-Đã kiểm chứng Python 3.13.14, torch 2.9.1+cu128, torchvision 0.24.1+cu128,
-Transformers 4.57.6, RTX 3050 Laptop 4096 MiB. Phiên bản đầy đủ được lưu
-trong [báo cáo môi trường](docs/validation/environment-freeze.txt).
-
-Có thể thêm `--find-links /home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/wheelhouse`
-vào lệnh cài dependency để tái sử dụng các wheel đã có. Đây không phải bộ
-wheel CUDA đầy đủ. Checkpoint được đọc tại chỗ qua
-`AutoModel.from_pretrained(..., local_files_only=True)`; không tải lại và
-không dùng `torch.hub` với file safetensors.
-
-## Config và cách chạy
-
-Mọi đường dẫn dữ liệu/checkpoint nằm trong YAML, không hardcode trong model
-hoặc script kiểm chứng. DINOv3 yêu cầu `MODEL.dinov3_checkpoint` trỏ tới thư
-mục Hugging Face gồm `config.json`, `model.safetensors`,
-`preprocessor_config.json`. Có thể đổi đường dẫn sang Base/Satellite sau;
-backbone vẫn đóng băng. Thiếu file sẽ báo lỗi, không tự tải mạng.
-
-Config đầy đủ: `configs/PASTIS24/TSViT_DINOv3_small_fold1.yaml`.
-Sửa `DATASETS.train/eval.base_dir` và `paths` thành vị trí dữ liệu/split
-thật. `paths` là CSV một cột, không header; đường dẫn từng pickle được ghép
-với `base_dir` như dataloader gốc. Khi không cung cấp hai trường này, loader
-tiếp tục dùng `data/datasets.yaml` như trước. Config mẫu fold1 đầy đủ còn để
-`/path/to/PASTIS24` vì chưa tải toàn bộ tập và split chính thức vào repo.
+For example, with a configured temporal-variant YAML:
 
 ```bash
 .venv/bin/python train_and_eval/segmentation_training_transf.py \
-  --config configs/PASTIS24/TSViT_DINOv3_small_fold1.yaml --device 0
+  --config configs/PASTIS24/TSViT_DINOv3_Temporal_small_fold1.yaml --device 0
 ```
 
-Batch train/eval mặc định 1, `num_workers=0`, T=60; temporal/spatial depth=4,
-dim=128, 19 lớp như config TSViT gốc. Để trống
-`CHECKPOINT.load_from_checkpoint` trong lần đầu. Checkpoint TSViT cũ không
-strict-load trực tiếp được vào model mới do patch embedding khác nhau.
-Checkpoint mới vẫn lưu đầy đủ `state_dict` bằng pipeline gốc; nạp lại trọng
-số chưa phải resume trạng thái optimizer/scheduler.
+The command requires a CUDA-enabled environment. Checkpoints must match the
+selected architecture. Strict loading across the two variants is unsupported,
+and original TSViT checkpoints cannot be loaded directly into the DINOv3
+models. The loader restores weights only, not optimizer/scheduler state or
+the previous epoch, so loading weights is not a full training resume.
 
-### Smoke check trên mẫu thật
+## 6. Local validation status and limitations
 
-`configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml` trỏ tới mẫu đã có
-`10000_0.pickle`, nguồn [Drive PASTIS24 được cung cấp](https://drive.google.com/drive/u/0/folders/1-ymz_s6-3BCUcLqNDJ67VKiSTx2n4Glw).
-Chỉ đọc dữ liệu và checkpoint từ `crop-map`; CSV, log, TensorBoard và
-checkpoint thử đều nằm trong repo hiện tại. Không cần tải lại mẫu.
+| Architecture | Forward/backward and weight update | Original training entrypoint | Checkpoint save/load |
+| --- | --- | --- | --- |
+| `TSViT_DINOv3` | Passed | Passed | Passed |
+| `TSViT_DINOv3_Temporal` | Passed | Passed | Passed |
 
-```bash
-# RGB, padding, gradient, backbone frozen, token ordering, checkpoint round-trip
-.venv/bin/python tests/smoke_dinov3.py \
-  --config configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml
+The local checks use `10000_0.pickle`, batch size 1, T=60, seed 42, and a
+frozen DINOv3 Small backbone. The sample has 43 real observations, 17 padded
+frames, and 521 valid label pixels. The training step and evaluation pass
+use the same sample to check the pipeline. They do not measure performance
+on unseen data or establish which architecture is more accurate.
 
-# Entrypoint gốc: 1 epoch/1 train step, eval và save mỗi step
-.venv/bin/python train_and_eval/segmentation_training_transf.py \
-  --config configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml --device 0
-```
+Full-dataset training and quality on separate splits remain untested.
+Segmentation metrics such as mIoU, accuracy, and per-class F1 should be
+reported after full training and evaluation. Base/Satellite and DINOv3 fine-tuning
+have not been evaluated. RGB does not use information from the other seven
+bands.
 
-`CHECKPOINT.profile_cuda: true` ghi peak allocated/reserved và train loss
-vào `CHECKPOINT.save_path/cuda_memory.json`; mặc định không bật cho config
-cũ. Mức này đo bằng bộ cấp phát PyTorch, không bao gồm toàn bộ CUDA context,
-thư viện CUDA hoặc tiến trình hiển thị. Không dùng làm bảo đảm VRAM cho batch
-lớn hơn hoặc backbone khác.
+The [two-Transformer report](docs/dinov3-smoke.md) and
+[temporal-variant report](docs/dinov3-temporal-smoke.md) contain logs,
+checksums, gradient checks, checkpoint comparisons, and optional local
+loss/memory diagnostics. These diagnostics document the smoke runs only.
 
-Kết quả và lệnh tái lập được ghi tại [docs/dinov3-smoke.md](docs/dinov3-smoke.md).
-Train và eval dùng **cùng một mẫu** trong smoke check, chỉ xác nhận pipeline
-hoạt động, không phải đánh giá chất lượng hay kết quả 5-fold PASTIS24.
+## 7. Troubleshooting
 
-## Các sửa tương thích cần thiết
+| Symptom | What to check |
+| --- | --- |
+| Checkpoint not found | The path must be a directory containing the three files listed in section 3 |
+| CSV or pickle not found | Check the configuration and the path formed by joining `base_dir` with each CSV entry |
+| CUDA unavailable | Check the driver and selected `.venv`; the entrypoint currently disallows CPU execution |
+| Missing/unexpected keys when loading weights | Select the matching architecture and checkpoint |
+| Out of memory after changing the configuration | Return to Small, batch size 1, and `frame_chunk_size=1` to reproduce the validated setup |
+| Cosine scheduler warning in the one-step smoke run | A one-step schedule has no meaningful annealing interval |
 
-- Model factory thêm architecture mới; import `FCN_CRNN` chỉ khi dùng nhánh
-  tương ứng để TSViT không cần nạp `torchfcn` cũ.
-- Data factory cho phép override đường dẫn trong config và chỉ import
-  dataloader France khi chọn France: file France gốc tại commit này có lỗi
-  indentation, trước đó làm cả import PASTIS thất bại. Không sửa nhánh France.
-- `read_yaml` dùng `safe_load` cho PyYAML mới; sửa cấp lồng thừa của fold1
-  trong `data/datasets.yaml`.
-- Entrypoint segmentation thêm seed tùy chọn, đóng SummaryWriter khi xong
-  và xuất VRAM khi bật profiling. Train/eval/loss/scheduler vẫn là pipeline
-  gốc. Smoke một bước có cảnh báo cosine scheduler không tạo lịch thay đổi
-  đáng kể, điều này phù hợp với lần kiểm tra rất ngắn.
-- Cờ CLI đúng ở commit này là `--config`, `--device` (ví dụ phía trên);
-  README TSViT cũ ghi `--config_file`, `--gpu_ids` không khớp script thực tế.
+The entrypoint uses `--config` and `--device`. The `--config_file` and
+`--gpu_ids` flags shown in the original TSViT README do not match this script.
 
-Không thay dữ liệu, checkpoint hay code trong `crop-map`; chưa đẩy GitHub.
+## References
+
+- [DeepSatModels](https://github.com/michaeltrs/DeepSatModels), [TSViT paper](https://arxiv.org/abs/2301.04944).
+- [PASTIS notebook: RGB band order](https://github.com/VSainteuf/pastis-benchmark/blob/main/demo.ipynb).
+- [DINOv3 in Transformers 4.57](https://huggingface.co/docs/transformers/v4.57.1/en/model_doc/dinov3).
+- [PyTorch releases](https://pytorch.org/get-started/previous-versions/).
