@@ -1,7 +1,6 @@
 import torch
 from data.MTLCC.dataloader import get_dataloader as get_mtlcc_dataloader
 from data.MTLCC.data_transforms import MTLCC_transform
-from data.France.dataloader import get_dataloader as get_france_dataloader
 from data.France.data_transforms import France_segmentation_transform
 from data.PASTIS24.dataloader import get_dataloader as get_pastis_dataloader
 from data.PASTIS24.data_transforms import PASTIS_segmentation_transform
@@ -22,8 +21,10 @@ def get_dataloaders(config):
     dataloaders = {}
     
     # TRAIN data -------------------------------------------------------------------------------------------------------
-    train_config['base_dir'] = DATASET_INFO[train_config['dataset']]['basedir']
-    train_config['paths'] = DATASET_INFO[train_config['dataset']]['paths_train']
+    if not train_config.get('base_dir'):
+        train_config['base_dir'] = DATASET_INFO[train_config['dataset']]['basedir']
+    if not train_config.get('paths'):
+        train_config['paths'] = DATASET_INFO[train_config['dataset']]['paths_train']
     if train_config['dataset'] == 'MTLCC':
         dataloaders['train'] = get_mtlcc_dataloader(
             paths_file=train_config['paths'], root_dir=train_config['base_dir'],
@@ -35,14 +36,17 @@ def get_dataloaders(config):
             transform=PASTIS_segmentation_transform(model_config, is_training=True),
             batch_size=train_config['batch_size'], shuffle=True, num_workers=train_config['num_workers'])
     else:
+        from data.France.dataloader import get_dataloader as get_france_dataloader
         dataloaders['train'] = get_france_dataloader(
             paths_file=train_config['paths'], root_dir=train_config['base_dir'],
             transform=France_segmentation_transform(model_config, train_config, is_training=True),
             batch_size=train_config['batch_size'], shuffle=True, num_workers=train_config['num_workers'])
 
     # EVAL data --------------------------------------------------------------------------------------------------------
-    eval_config['base_dir'] = DATASET_INFO[eval_config['dataset']]['basedir']
-    eval_config['paths'] = DATASET_INFO[eval_config['dataset']]['paths_eval']
+    if not eval_config.get('base_dir'):
+        eval_config['base_dir'] = DATASET_INFO[eval_config['dataset']]['basedir']
+    if not eval_config.get('paths'):
+        eval_config['paths'] = DATASET_INFO[eval_config['dataset']]['paths_eval']
     if eval_config['dataset'] == 'MTLCC':
         dataloaders['eval'] = get_mtlcc_dataloader(
             paths_file=eval_config['paths'], root_dir=eval_config['base_dir'],
@@ -54,6 +58,7 @@ def get_dataloaders(config):
             transform=PASTIS_segmentation_transform(model_config, is_training=False),
             batch_size=eval_config['batch_size'], shuffle=False, num_workers=eval_config['num_workers'])
     else:
+        from data.France.dataloader import get_dataloader as get_france_dataloader
         dataloaders['eval'] = get_france_dataloader(
             paths_file=eval_config['paths'], root_dir=eval_config['base_dir'],
             transform=France_segmentation_transform(model_config, eval_config, is_training=True),

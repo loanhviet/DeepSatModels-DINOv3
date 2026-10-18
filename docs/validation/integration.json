@@ -1,0 +1,56 @@
+{
+  "config": "configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml",
+  "seed": 42,
+  "python": "3.13.14",
+  "sample_path": "/home/viet/projects/TLU/TSViT/crop-map/data_collection/outputs/reference_comparison/10000_0.pickle",
+  "sample_sha256": "4852e58f320e8b1d7aedba527fa427870d9eeb434892a1931e549150931f3766",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "torch": "2.9.1+cu128",
+  "cuda": "12.8",
+  "input_shape": [
+    1,
+    60,
+    24,
+    24,
+    11
+  ],
+  "logits_shape": [
+    1,
+    19,
+    24,
+    24
+  ],
+  "real_frames": 43,
+  "padding_frames": 17,
+  "valid_label_pixels": 521,
+  "loss": 3.011747360229492,
+  "rgb_max_abs_error": 0.0,
+  "gradient_norms": {
+    "to_patch_embedding.projection": 0.2670685425400734,
+    "to_temporal_embedding_input": 0.128568384796381,
+    "temporal_transformer": 4.512226447463036,
+    "space_transformer": 5.276567035354674,
+    "mlp_head": 1.95908335508503
+  },
+  "backbone_sha256_before_and_after": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_unchanged": true,
+  "original_forward_and_attention": true,
+  "padding_after_projection": "projection.bias (no new attention mask)",
+  "checkpoint_roundtrip_exact": true,
+  "batch_time_patch_order_and_chunking": true,
+  "original_tsvit": {
+    "logits_shape": [
+      1,
+      19,
+      24,
+      24
+    ],
+    "loss": 3.0058653354644775
+  },
+  "forward_backward_profile": {
+    "elapsed_seconds": 1.7315517110000656,
+    "peak_allocated_mib": 687.541015625,
+    "peak_reserved_mib": 754.0
+  },
+  "checkpoint_path": "outputs/dinov3-integration/roundtrip.pth"
+}

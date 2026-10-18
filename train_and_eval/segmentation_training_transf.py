@@ -2,6 +2,9 @@ import sys
 import os
 sys.path.insert(0, os.getcwd())
 import argparse
+import json
+import random
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -21,6 +24,12 @@ from data import get_loss_data_input
 
 
 def train_and_evaluate(net, dataloaders, config, device, lin_cls=False):
+
+    profile_cuda = config['CHECKPOINT'].get('profile_cuda', False) and device.type == 'cuda'
+    if profile_cuda:
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    started_at = time.perf_counter()
 
     def train_step(net, sample, loss_fn, optimizer, device, loss_input_fn):
         optimizer.zero_grad()
@@ -183,6 +192,23 @@ def train_and_evaluate(net, dataloaders, config, device, lin_cls=False):
 
         scheduler.step_update(abs_step)
 
+    writer.close()
+    if profile_cuda:
+        torch.cuda.synchronize(device)
+        memory_report = {
+            'device': torch.cuda.get_device_name(device),
+            'torch': torch.__version__,
+            'cuda': torch.version.cuda,
+            'peak_allocated_mib': torch.cuda.max_memory_allocated(device) / 2**20,
+            'peak_reserved_mib': torch.cuda.max_memory_reserved(device) / 2**20,
+            'elapsed_seconds': time.perf_counter() - started_at,
+            'train_steps': num_epochs * num_steps_train,
+            'last_train_loss': loss.item(),
+        }
+        with open(os.path.join(save_path, 'cuda_memory.json'), 'w') as handle:
+            json.dump(memory_report, handle, indent=2)
+        print('CUDA profile:', json.dumps(memory_report))
+
 
 
 if __name__ == "__main__":
@@ -204,6 +230,12 @@ if __name__ == "__main__":
 
     config = read_yaml(config_file)
     config['local_device_ids'] = device_ids
+
+    if 'seed' in config['SOLVER']:
+        seed = config['SOLVER']['seed']
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
     dataloaders = get_dataloaders(config)
 

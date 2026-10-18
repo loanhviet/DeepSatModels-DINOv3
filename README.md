@@ -2,6 +2,17 @@
 
 Welcome to the dedicated repository for advancing land cover recognition through the application of state-of-the-art models on satellite imagery. This repository serves as a comprehensive resource for researchers and practitioners in the field, providing access to research code, detailed setup instructions, and guidelines for conducting experiments with satellite image timeseries data.
 
+## DINOv3 adaptation (Task 1)
+
+This working copy is based on commit `53e6559`. The new `TSViT_DINOv3`
+architecture replaces **patch embedding with a frozen per-date DINOv3 backbone**
+and a trainable projection. It retains the original TSViT temporal/spatial
+Transformers, attention and segmentation head, plus the original PASTIS data,
+training and loss pipeline. The first version uses RGB only.
+
+See [README_DINOV3.md](README_DINOV3.md) for installation, configs, padding
+semantics, commands, real-sample smoke results and measured VRAM.
+
 ## Featured Research Publications
 
 This repository highlights contributions to the field through the following research publications:

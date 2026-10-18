@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-17",
+  "baseline_commit": "53e655936be088522ec419b3ead38684c20ae1ec",
+  "unmodified_original_files_sha256": {
+    "models/TSViT/TSViTdense.py": "6276bc57b85495449500c1d6da0dfb412baf16f16626d5af9aa9ffe5c8f9ef38",
+    "models/TSViT/module.py": "9056ce62aaa0b3191ec7332f79872090f63d8fa933994b9e525432bb736d0904",
+    "data/PASTIS24/dataloader.py": "b075de496f726c4f5c76de746f71b9f296450d738eae37eb9b278abd8ae43f9a",
+    "data/PASTIS24/data_transforms.py": "230898d7a6f1c0a0dfe0e1dd56d01e8457e01e9d7354432c3c2e7bd0de56771c",
+    "metrics/loss_functions.py": "555e6370ee956755f9c51acc724be5898d54a39be0a7b435cf9eb4d720e4adc2",
+    "metrics/numpy_metrics.py": "fb6d719304611df432bde8f9fd2fbf0c81e4a05b39a8b3b80d2cc1f3e78cc42c",
+    "metrics/torch_metrics.py": "1c782245159e7ac2733c7b861edf340b9df60cae86e92500ed9e68df6ed9737d"
+  },
+  "checkpoint_safetensors_sha256": "4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d",
+  "sample_source_folder": "https://drive.google.com/drive/u/0/folders/1-ymz_s6-3BCUcLqNDJ67VKiSTx2n4Glw",
+  "sample_drive_file_id": "1yArZczqDkt8K9FrD1I8Jwsu5Ww72XveO",
+  "scope": "One real sample in train and eval; mechanics only, not benchmark accuracy. No Base/Satellite run.",
+  "gpu_measurement": "PyTorch allocator peak allocated/reserved, MiB; excludes CUDA context and non-PyTorch allocations."
+}
