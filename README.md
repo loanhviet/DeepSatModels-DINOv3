@@ -69,6 +69,8 @@ return rearrange(embeddings.reshape(b, t, num_patches, -1), 'b t n d -> (b n) t 
 
 Output layout matches the original patch embed: `(batch × num_patches, time, dim)` for the temporal Transformer.
 
+For DINOv3 Small, projection learns to combine each patch's 384 feature values into the 128 values expected by TSViT. Training updates this mapping while keeping the pretrained DINOv3 weights fixed.
+
 ### 4. Loss computation, backward, and optimizer step
 
 **Loss (scalar, no weight update):** logits `[B,19,24,24]` are permuted to `[B,H,W,C]`. [`MaskedCrossEntropyLoss`](metrics/loss_functions.py#L149-L191) masks void label 19, applies log-softmax on the class axis, gathers the target class, and means over valid pixels:
@@ -168,7 +170,7 @@ The training loop permutes logits to `[B,H,W,C]`; labels and boolean masks are `
 
 **All-void fix:** mean reduction now raises `ValueError` before backward/step instead of returning `NaN`. Valid-pixel values/gradients are unchanged; unreduced evaluation output remains empty when no pixels are valid. Returning zero alone would still allow AdamW momentum/weight-decay updates, so this fix explicitly rejects the batch.
 
-**Gradient path:** \(\mathcal{L}\) depends on logits from the full forward pass (`TSViT_DINOv3` or `TSViT_DINOv3_Temporal`). Autograd flows through projection, temporal/spatial blocks, and the head. It does **not** reach DINOv3 weights because backbone features are computed inside `torch.no_grad()`; trainable layers still receive gradients from \(\partial \mathcal{L}/\partial \theta\) on their own parameters.
+**Gradient path:** $\mathcal{L}$ depends on logits from the full forward pass (`TSViT_DINOv3` or `TSViT_DINOv3_Temporal`). Autograd flows through projection, temporal/spatial blocks, and the head. It does **not** reach DINOv3 weights because backbone features are computed inside `torch.no_grad()`; trainable layers still receive gradients from $\partial \mathcal{L}/\partial \theta$ on their own parameters.
 
 Training uses the same three-step loop as upstream; `net` is the DINOv3-integrated model from YAML:
 
