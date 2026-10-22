@@ -1,0 +1,15 @@
+0
+current learn rate:  0.001
+masked_cross_entropy
+masked_cross_entropy
+Trainable params shapes are:
+[torch.Size([1, 19, 128]), torch.Size([128, 384]), torch.Size([128]), torch.Size([128, 366]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([384, 128]), torch.Size([128, 128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([512, 128]), torch.Size([512]), torch.Size([128, 512]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([384, 128]), torch.Size([128, 128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([512, 128]), torch.Size([512]), torch.Size([128, 512]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([384, 128]), torch.Size([128, 128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([512, 128]), torch.Size([512]), torch.Size([128, 512]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([384, 128]), torch.Size([128, 128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([512, 128]), torch.Size([512]), torch.Size([128, 512]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([128]), torch.Size([4, 128]), torch.Size([4])]
+Cosine annealing scheduler will have no effect on the learning rate since t_initial = t_mul = eta_mul = 1.
+abs_step: 1, epoch: 1, step:     1, loss: 2.8545644, batch_iou: 0.0820, batch accuracy: 0.1516, batch precision: 0.1516, batch recall: 0.1516, batch F1: 0.1516
+finished iterating over dataset after step 0
+calculating metrics...
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+Mean (micro) Evaluation metrics (micro/macro), loss: 2.1593797, iou: 0.1868/0.0947, accuracy: 0.3148/0.2119, precision: 0.3148/0.3040, recall: 0.3148/0.2119, F1: 0.3148/0.3790, unique pred labels: [2 3]
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+saving per class summaries
+CUDA profile: {"device": "NVIDIA GeForce RTX 3050 Laptop GPU", "torch": "2.9.1+cu128", "cuda": "12.8", "peak_allocated_mib": 569.5810546875, "peak_reserved_mib": 648.0, "elapsed_seconds": 1.021647612000379, "train_steps": 1, "last_train_loss": 2.8545644283294678}

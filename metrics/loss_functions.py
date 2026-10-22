@@ -181,7 +181,11 @@ class MaskedCrossEntropyLoss(torch.nn.Module):
         else:
             masked_logits_flat = logits.reshape(-1, logits.size(-1))  # (N*H*W x Nclasses)
             masked_target_flat = target.reshape(-1, 1).to(torch.int64)  # (N*H*W x 1)
-        masked_log_probs_flat = torch.nn.functional.log_softmax(masked_logits_flat)  # (N*H*W x Nclasses)
+        # An empty mean is undefined. Reject before backward/step rather than
+        # returning NaN or a zero loss that still permits optimizer updates.
+        if self.mean and masked_target_flat.numel() == 0:
+            raise ValueError('MaskedCrossEntropyLoss: no valid target pixels for mean reduction')
+        masked_log_probs_flat = torch.nn.functional.log_softmax(masked_logits_flat, dim=-1)  # (N*H*W x Nclasses)
         masked_losses_flat = -torch.gather(masked_log_probs_flat, dim=1, index=masked_target_flat)  # (N*H*W x 1)
         if self.mean:
             return masked_losses_flat.mean()

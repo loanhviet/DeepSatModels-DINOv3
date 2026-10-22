@@ -1,0 +1,113 @@
+{
+  "recorded_at_utc": "2026-10-22T14:40:06.154424+00:00",
+  "head_at_verification": "3355fe1efb7d11dd1656c7807c73974c26cae0ec",
+  "branch": "feat/dinov3-integration",
+  "scope": "One real sample; one DINOv3 optimizer step per dedicated smoke; one train/eval batch per standard entrypoint. No full training, checkpoint download or held-out model-quality assessment.",
+  "application_code_changed_in_this_documentation_review": false,
+  "source_sha256": {
+    "models/TSViT/TSViTDINOv3.py": "caff3c83926bd60b5c1efd3c1659cbf5bcbf40fd70fe8d993d748e416164b253",
+    "models/TSViT/TSViTdense.py": "6276bc57b85495449500c1d6da0dfb412baf16f16626d5af9aa9ffe5c8f9ef38",
+    "metrics/loss_functions.py": "463c5ebb66b6f0b63160ea8a2abfbe8cd463c27b2bc4ba85a940a058fbd64610",
+    "tests/smoke_dinov3.py": "0e7b436cbb51bdff1456b23775b6f278394e739dbe405695cd6aa0c354b075df",
+    "tests/test_masked_cross_entropy.py": "7294b9361b167a85299400c13f3f6129d0531d2b40bfc607129ce04d27b95b1e",
+    "train_and_eval/segmentation_training_transf.py": "7a4341c8bd6da65d9a7c7e7b6c162d43c570ce2b0a02c78e7caa62e457146c79",
+    "utils/torch_utils.py": "07462ed49e4a026fc57f848e8ae485b1eba9076cc502f5b925fef13839ac27f7"
+  },
+  "cpu_loss_tests": {
+    "command": [
+      ".venv/bin/python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-p",
+      "test_masked_cross_entropy.py",
+      "-v"
+    ],
+    "exit_code": 0,
+    "tests_passed": 4,
+    "observed_elapsed_seconds": 0.911
+  },
+  "readme_local_config_snippet_executed": true,
+  "readme_local_config_snippet_adjustment": "Only the checkpoint and sample-root placeholders were replaced with existing local paths.",
+  "smoke_checks": {
+    "dinov3": {
+      "report": "dinov3.json",
+      "verified_at_utc": "2026-10-22T14:31:43.761029+00:00",
+      "command": [
+        ".venv/bin/python",
+        "tests/smoke_dinov3.py",
+        "--config",
+        "configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml",
+        "--output",
+        "outputs/readme-review/dinov3"
+      ],
+      "exit_code": 0
+    },
+    "temporal": {
+      "report": "temporal.json",
+      "verified_at_utc": "2026-10-22T14:31:49.754304+00:00",
+      "command": [
+        ".venv/bin/python",
+        "tests/smoke_dinov3.py",
+        "--config",
+        "configs/PASTIS24/TSViT_DINOv3_Temporal_small_smoke.yaml",
+        "--output",
+        "outputs/readme-review/temporal"
+      ],
+      "exit_code": 0
+    }
+  },
+  "standard_entrypoints": {
+    "dinov3": {
+      "profile": "dinov3-entrypoint.json",
+      "log": "dinov3-entrypoint.log",
+      "command": [
+        ".venv/bin/python",
+        "train_and_eval/segmentation_training_transf.py",
+        "--config",
+        "outputs/local-smoke/TSViT_DINOv3_small_smoke.yaml",
+        "--device",
+        "0"
+      ],
+      "exit_code": 0,
+      "train_steps": 1,
+      "eval_batches": 1,
+      "expected_artifacts_verified": [
+        "config_file.yaml",
+        "1epoch_1step.pth",
+        "best.pth",
+        "cuda_memory.json",
+        "events.out.tfevents.*"
+      ]
+    },
+    "temporal": {
+      "profile": "temporal-entrypoint.json",
+      "log": "temporal-entrypoint.log",
+      "command": [
+        ".venv/bin/python",
+        "train_and_eval/segmentation_training_transf.py",
+        "--config",
+        "outputs/local-smoke/TSViT_DINOv3_Temporal_small_smoke.yaml",
+        "--device",
+        "0"
+      ],
+      "exit_code": 0,
+      "train_steps": 1,
+      "eval_batches": 1,
+      "expected_artifacts_verified": [
+        "config_file.yaml",
+        "1epoch_1step.pth",
+        "best.pth",
+        "cuda_memory.json",
+        "events.out.tfevents.*"
+      ]
+    }
+  },
+  "notes": [
+    "Existing checkpoints and data were reused.",
+    "Training/evaluation in the entrypoint smoke intentionally use the same sample.",
+    "Large .pth checkpoints and local YAMLs remain under ignored outputs/."
+  ]
+}

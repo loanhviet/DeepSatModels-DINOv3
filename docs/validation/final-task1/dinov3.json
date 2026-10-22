@@ -1,0 +1,151 @@
+{
+  "verified_at_utc": "2026-10-18T09:22:14.800333+00:00",
+  "source_sha256": {
+    "models/TSViT/TSViTDINOv3.py": "caff3c83926bd60b5c1efd3c1659cbf5bcbf40fd70fe8d993d748e416164b253",
+    "metrics/loss_functions.py": "463c5ebb66b6f0b63160ea8a2abfbe8cd463c27b2bc4ba85a940a058fbd64610",
+    "tests/smoke_dinov3.py": "0e7b436cbb51bdff1456b23775b6f278394e739dbe405695cd6aa0c354b075df",
+    "utils/torch_utils.py": "07462ed49e4a026fc57f848e8ae485b1eba9076cc502f5b925fef13839ac27f7",
+    "train_and_eval/segmentation_training_transf.py": "7a4341c8bd6da65d9a7c7e7b6c162d43c570ce2b0a02c78e7caa62e457146c79"
+  },
+  "config": "configs/PASTIS24/TSViT_DINOv3_small_smoke.yaml",
+  "architecture": "TSViT_DINOv3",
+  "seed": 42,
+  "python": "3.13.14",
+  "transformers": "4.57.6",
+  "sample_path": "/home/viet/projects/TLU/TSViT/crop-map/data_collection/outputs/reference_comparison/10000_0.pickle",
+  "sample_sha256": "4852e58f320e8b1d7aedba527fa427870d9eeb434892a1931e549150931f3766",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "torch": "2.9.1+cu128",
+  "cuda": "12.8",
+  "input_shape": [
+    1,
+    60,
+    24,
+    24,
+    11
+  ],
+  "logits_shape": [
+    1,
+    19,
+    24,
+    24
+  ],
+  "real_frames": 43,
+  "padding_frames": 17,
+  "valid_label_pixels": 521,
+  "loss": 3.011747360229492,
+  "rgb_max_abs_error": 0.0,
+  "gradient_norms": {
+    "to_patch_embedding.projection": 0.2670685425400734,
+    "to_temporal_embedding_input": 0.128568384796381,
+    "temporal_transformer": 4.512226447463036,
+    "mlp_head": 1.95908335508503,
+    "temporal_token": 0.073695108294487,
+    "space_transformer": 5.276567035354674,
+    "space_pos_embedding": 0.002148672239854932
+  },
+  "gradient_norms_definition": "Legacy sum of per-tensor L2 gradient norms",
+  "gradient_l2": {
+    "to_patch_embedding.projection": 0.2054076398822272,
+    "to_temporal_embedding_input": 0.09251120493693464,
+    "temporal_transformer": 1.238322115419547,
+    "mlp_head": 1.888751002333153,
+    "temporal_token": 0.07369510576221826,
+    "space_transformer": 1.2765412626111603,
+    "space_pos_embedding": 0.0021486723047046945
+  },
+  "gradient_l2_definition": "L2 over all gradient elements in each group; float64 accumulation",
+  "parameter_updates": {
+    "to_patch_embedding.projection": {
+      "delta_l2": 0.221943914834611,
+      "delta_max_abs": 0.0010000001639127731,
+      "changed_tensors": 2,
+      "total_tensors": 2
+    },
+    "to_temporal_embedding_input": {
+      "delta_l2": 0.07326241201619839,
+      "delta_max_abs": 0.0010000001639127731,
+      "changed_tensors": 2,
+      "total_tensors": 2
+    },
+    "temporal_transformer": {
+      "delta_l2": 0.8896299743484514,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 46,
+      "total_tensors": 46
+    },
+    "mlp_head": {
+      "delta_l2": 0.025311405686309154,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 4,
+      "total_tensors": 4
+    },
+    "temporal_token": {
+      "delta_l2": 0.04930907712496123,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 1,
+      "total_tensors": 1
+    },
+    "space_transformer": {
+      "delta_l2": 0.8894236405856455,
+      "delta_max_abs": 0.001000046730041504,
+      "changed_tensors": 46,
+      "total_tensors": 46
+    },
+    "space_pos_embedding": {
+      "delta_l2": 0.13527121439381318,
+      "delta_max_abs": 0.0009999275207519531,
+      "changed_tensors": 1,
+      "total_tensors": 1
+    }
+  },
+  "weights_unchanged_after_backward_before_step": true,
+  "optimizer": {
+    "class": "AdamW",
+    "parameter_helper": "utils.torch_utils.get_net_trainable_params",
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "trainable_parameter_tensors": 102,
+    "optimizer_parameter_tensors": 102,
+    "exact_trainable_coverage_no_duplicates": true
+  },
+  "loss_and_logits_gradient_match_valid_pixel_cross_entropy": true,
+  "void_logits_gradient_max_abs": 0.0,
+  "pretrained_checkpoint": "/home/viet/projects/TLU/TSViT/crop-map/preparation/dinov3/models/small/model.safetensors",
+  "pretrained_checkpoint_sha256": "4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d",
+  "pretrained_tensors_exactly_loaded": 211,
+  "backbone_sha256_before": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_sha256_after": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_sha256_before_and_after": "8c66debc71930dc635178fc5d016f5c53792a59252fb6f33c452cd9a07f151ca",
+  "backbone_unchanged": true,
+  "inherited_original_forward": true,
+  "original_temporal_attention": true,
+  "spatial_encoder_removed": false,
+  "bypassed_original_forward_exact": false,
+  "batch_size_two_forward_exact": false,
+  "trainable_parameters": 1701508,
+  "frozen_parameters": 21596544,
+  "padding_after_projection": "projection.bias (no new attention mask)",
+  "checkpoint_roundtrip_exact": true,
+  "batch_time_patch_order_and_chunking": true,
+  "original_tsvit": {
+    "logits_shape": [
+      1,
+      19,
+      24,
+      24
+    ],
+    "loss": 3.0058653354644775
+  },
+  "forward_backward_profile": {
+    "elapsed_seconds": 0.8265972220033291,
+    "peak_allocated_mib": 687.541015625,
+    "peak_reserved_mib": 756.0
+  },
+  "checkpoint_path": "outputs/task1-final/dinov3/roundtrip.pth"
+}
