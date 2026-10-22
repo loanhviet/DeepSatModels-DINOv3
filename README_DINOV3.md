@@ -1,6 +1,10 @@
 # DINOv3 Integration with TSViT
 
-For a concise list of changed files, see [README.md — What changed](README.md#what-changed).
+This is the implementation companion to the [main README](README.md).
+For the insertion point and component comparison, see [DINOv3 integration](README.md#dinov3-integration).
+The main walkthrough includes [RGB/token adapter code](README.md#34-input-adapter-and-tensor-interfaces),
+the [masked-loss calculation](README.md#42-how-the-configured-loss-is-implemented)
+and the [training step and optimizer](README.md#43-how-backward-and-adamw-update-the-integrated-model).
 
 This guide documents changes from DeepSatModels at commit `53e6559` and
 explains how to reproduce the validation runs. The supported configuration
@@ -9,6 +13,8 @@ is semantic segmentation on PASTIS24, producing a 24×24 output map with
 
 Local smoke checks verify the implementation on a small real sample. Full
 training and evaluation on separate splits have not been performed.
+The acceptance target is executable integration, including a finite loss,
+backward, one optimizer step and checkpoint save/load. Full training is future work.
 
 ## 1. Architecture
 
@@ -40,7 +46,15 @@ blocks receive gradients. With `frame_chunk_size=1`, one image is passed
 through DINOv3 at a time to limit memory use.
 
 `TSViT_DINOv3` replaces only `to_patch_embedding` and inherits
-`TSViT.forward()`. `TSViT_DINOv3_Temporal` uses a separate forward pass that
+`TSViT.forward()`. Its [architecture diagram](README.md#32-variant-a-replace-patch-embedding-retain-both-encoders) is in the main README.
+
+### Temporal-only variant
+
+![Temporal-only DINOv3 integration: the adapter and temporal encoder are retained, class tokens are regrouped, and the segmentation head receives them without post-temporal spatial attention.](figures/tsvit-dinov3-temporal.svg)
+
+*The temporal-only architecture retains the original token notation and segmentation head. Spatial attention and spatial positional embeddings are removed; class-token regrouping is still required.*
+
+`TSViT_DINOv3_Temporal` uses a separate forward pass that
 connects temporal outputs directly to the head; it has no `space_*` modules
 or weights. It combines a DINOv3 spatial encoder with the TSViT temporal
 encoder. DINOv3 processes each image before temporal aggregation. Further
@@ -48,6 +62,10 @@ experiments are needed to assess the effect of removing the spatial
 Transformer that originally followed temporal aggregation.
 
 ### Input adaptation
+
+![Detailed adapter, read bottom to top within each column and then left to right: RGB preparation, frozen DINOv3 patch features, and trainable projection into TSViT's temporal layout.](figures/dinov3-adapter.svg)
+
+*Read (a) bottom to top, then (b), then (c). The columns show RGB preparation, frozen spatial features and the trainable projection into the temporal encoder.*
 
 The original PASTIS transform returns `[B,T,24,24,11]`: ten normalized
 spectral bands and one day-of-year (DOY) channel. DOY is still passed to the
@@ -58,9 +76,18 @@ original temporal embedding. The image adapter:
    exact statistics from the original `Normalize` transform.
 3. Computes `rgb = clamp(raw / 10000, 0, 1)`, resizes bilinearly from 24×24
    to 192×192, and applies the checkpoint's DINOv3 normalization statistics.
-4. Extracts patch tokens, excluding CLS and register tokens. The 192/16 = 12
-   patches per axis match the 24/2 = 12 patch grid used by TSViT.
-5. Projects Small's 384-dimensional features to TSViT's 128-dimensional space.
+4. Runs frozen DINOv3 on valid dates in frame chunks, under `eval()` and
+   `torch.no_grad()`. With Small, it retains 144 patch tokens of dimension
+   384 per date, excluding CLS and register tokens.
+5. Scatters tokens back to their original batch/time positions in
+   `[B·T,144,384]`. Padded dates have zero features before projection.
+6. Projects Small's 384-dimensional features to TSViT's 128-dimensional
+   space with `Linear(384,128)`, outside `torch.no_grad()`.
+7. Rearranges `[B,T,144,128]` to `[B·144,T,128]` for temporal attention.
+   TSViT then adds DOY embeddings and prepends its learned class tokens.
+
+The grids align because `192 / 16 = 24 / 2 = 12` patches per axis, yielding
+144 spatial locations in both the original model and the adapter.
 
 The current implementation uses RGB only; the other seven bands are not
 used for feature extraction. Resizing is confined to the adapter, adds no
@@ -169,8 +196,11 @@ each CSV entry to locate its pickle file. If an entry is
 The repository's smoke CSV contains only `10000_0.pickle`, so its `base_dir`
 must point directly to the directory containing that file.
 
-For smoke runs, use any valid PASTIS24 pickle (for example `10000_0.pickle`) and
-point `DATASETS.train/eval.base_dir` at the directory that contains it. Update YAML:
+The dedicated smoke test uses the verified `10000_0.pickle` fixture: 43 real
+dates plus 17 padded dates, 521 valid label pixels and 55 void pixels. It
+contains fixture-specific padding/layout assertions, so another valid PASTIS24
+sample is not necessarily a drop-in replacement. Point
+`DATASETS.train/eval.base_dir` at the directory containing this file. Update YAML:
 
 | Field | Required value |
 | --- | --- |
@@ -183,6 +213,9 @@ point `DATASETS.train/eval.base_dir` at the directory that contains it. Update Y
 If `base_dir` or `paths` is omitted, the loader falls back to
 `data/datasets.yaml`. Run all commands from the repository root so that
 relative paths resolve correctly.
+The [main setup instructions](README.md#setup) generate local YAML copies
+under ignored `outputs/local-smoke/` so that shared configs do not need
+machine-specific edits.
 
 ## 5. Validation and training
 
@@ -219,7 +252,10 @@ both Transformers. Its default output directories are
 `outputs/dinov3-integration/` and `outputs/dinov3-smoke-entrypoint/`.
 The `outputs/` directory is excluded from Git.
 
-### Full training
+### Future full training (optional)
+
+This is outside the current acceptance scope. Reproducing the integration
+requires only the one-sample checks above and does not require a full run.
 
 The fold1 configurations provide starting points for full training. Before
 running, set the data, checkpoint, and output paths as described above, and
@@ -241,6 +277,10 @@ models. The loader restores weights only, not optimizer/scheduler state or
 the previous epoch, so loading weights is not a full training resume.
 
 ## 6. Local validation status and limitations
+
+See the [current verification record](docs/integration-verification.md)
+for refreshed one-step reports and exact commands. The reports linked below
+are retained as historical evidence.
 
 | Architecture | Forward/backward and weight update | Original training entrypoint | Checkpoint save/load |
 | --- | --- | --- | --- |
